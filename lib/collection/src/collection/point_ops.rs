@@ -3,7 +3,7 @@ use std::sync::Arc;
 
 use futures::stream::FuturesUnordered;
 use futures::{future, StreamExt as _, TryFutureExt, TryStreamExt as _};
-use itertools::Itertools;
+use itertools::{Either, Itertools};
 use segment::data_types::order_by::{Direction, OrderBy};
 use segment::types::{Filter, ShardKey, WithPayload, WithPayloadInterface};
 use validator::Validate as _;
@@ -293,9 +293,9 @@ impl Collection {
                 .map(api::rest::Record::from)
                 .collect_vec(),
             Some(order_by) => {
-                retrieved_iter
+                let retrieved_iter = retrieved_iter
                     // Extract and remove order value from payload
-                    .flat_map(|records| {
+                    .map(|records| {
                         records.into_iter().map(|mut record| {
                             let value;
                             if local_only {
@@ -311,20 +311,25 @@ impl Collection {
                             };
                             (value, record)
                         })
-                    })
-                    .sorted_unstable_by(|(value_a, record_a), (value_b, record_b)| {
-                        match order_by.direction() {
-                            Direction::Asc => (value_a, &record_a.id).cmp(&(value_b, &record_b.id)),
-                            Direction::Desc => {
-                                (value_b, &record_b.id).cmp(&(value_a, &record_a.id))
-                            }
-                        }
-                    })
-                    // Add each point only once, dedup by point ID
-                    .dedup_by(|(_, record_a), (_, record_b)| record_a.id == record_b.id)
-                    .map(|(_, record)| api::rest::Record::from(record))
-                    .take(limit)
-                    .collect_vec()
+                    });
+
+                match order_by.direction() {
+                    Direction::Asc => Either::Left(retrieved_iter.kmerge_by(
+                        |(value_a, record_a), (value_b, record_b)| {
+                            (value_a, &record_a.id) < (value_b, &record_b.id)
+                        },
+                    )),
+                    Direction::Desc => Either::Right(retrieved_iter.kmerge_by(
+                        |(value_a, record_a), (value_b, record_b)| {
+                            (value_a, &record_a.id) > (value_b, &record_b.id)
+                        },
+                    )),
+                }
+                // Add each point only once, dedup by point ID
+                .unique_by(|(_, record)| record.id)
+                .map(|(_, record)| api::rest::Record::from(record))
+                .take(limit)
+                .collect_vec()
             }
         };
 
