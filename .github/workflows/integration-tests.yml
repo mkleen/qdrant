@@ -24,7 +24,12 @@ jobs:
           repo-token: ${{ secrets.GITHUB_TOKEN }}
       - uses: Swatinem/rust-cache@v2
       - name: Install dependencies
-        run: sudo apt-get install clang
+        run: |
+          sudo apt-get install clang
+          curl -sSL https://install.python-poetry.org | python3 -
+
+          poetry -C tests check --lock
+          poetry -C tests install --no-root
       - name: Build
         run: cargo build --features "service_debug data-consistency-check"
       - name: Run integration tests
