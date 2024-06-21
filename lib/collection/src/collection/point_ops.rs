@@ -326,7 +326,7 @@ impl Collection {
                     )),
                 }
                 // Add each point only once, dedup by point ID
-                .unique_by(|(_, record)| record.id)
+                .dedup_by(|a, b| a.1.id == b.1.id)
                 .map(|(_, record)| api::rest::Record::from(record))
                 .take(limit)
                 .collect_vec()
