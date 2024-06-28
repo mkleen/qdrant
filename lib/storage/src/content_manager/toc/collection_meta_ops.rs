@@ -72,6 +72,10 @@ impl TableOfContent {
                 log::debug!("Changing aliases");
                 self.update_aliases(operation).await
             }
+            CollectionMetaOperations::ChangeProperty(operation) => {
+                log::debug!("Changing aliases");
+                self.update_properties(operation).await
+            }
             CollectionMetaOperations::Resharding(collection, operation) => {
                 log::debug!("Resharding {operation:?} of {collection}");
 
@@ -224,6 +228,40 @@ impl TableOfContent {
             }
             Ok(false)
         }
+    }
+
+    async fn update_properties(
+        &self,
+        operation: ChangePropertyOperation,
+    ) -> Result<bool, StorageError> {
+        let collection_lock = self.collections.write().await;
+        let mut meta_lock = self.meta_persistence.write().await;
+        for action in operation.actions {
+            match action {
+                PropertyOperations::AddProperty(AddPropertyOperation {
+                    add_property:
+                        AddProperty {
+                            collection_name,
+                            property,
+                        },
+                }) => {
+                    collection_lock
+                        .validate_collection_exists(&collection_name)
+                        .await?;
+                    meta_lock.insert(property, collection_name)?;
+                }
+                PropertyOperations::DeleteProperty(DeletePropertyOperation {
+                    delete_property:
+                        DeleteProperty {
+                            collection_name,
+                            property_name,
+                        },
+                }) => {
+                    meta_lock.delete(collection_name, property_name)?;
+                }
+            };
+        }
+        Ok(true)
     }
 
     /// performs several alias changes in an atomic fashion

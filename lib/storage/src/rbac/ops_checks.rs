@@ -53,6 +53,7 @@ impl Access {
             | CollectionMetaOperations::UpdateCollection(_)
             | CollectionMetaOperations::DeleteCollection(_)
             | CollectionMetaOperations::ChangeAliases(_)
+            | CollectionMetaOperations::ChangeProperty(_)
             | CollectionMetaOperations::Resharding(_, _)
             | CollectionMetaOperations::TransferShard(_, _)
             | CollectionMetaOperations::SetShardReplicaState(_)

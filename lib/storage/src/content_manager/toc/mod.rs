@@ -50,6 +50,7 @@ use crate::types::{PeerAddressById, StorageConfig};
 use crate::ConsensusOperations;
 
 pub const ALIASES_PATH: &str = "aliases";
+pub const PROPERTIES_PATH: &str = "properties";
 pub const COLLECTIONS_DIR: &str = "collections";
 pub const FULL_SNAPSHOT_FILE_NAME: &str = "full-snapshot";
 
@@ -66,6 +67,7 @@ pub struct TableOfContent {
     /// Assigns CPU permits to tasks to limit overall resource utilization.
     optimizer_cpu_budget: CpuBudget,
     alias_persistence: RwLock<AliasPersistence>,
+    meta_persistence: RwLock<CollectionPropertyPersistence>,
     pub this_peer_id: PeerId,
     channel_service: ChannelService,
     /// Backlink to the consensus, if none - single node mode
@@ -170,6 +172,10 @@ impl TableOfContent {
         let alias_persistence =
             AliasPersistence::open(alias_path).expect("Can't open database by the provided config");
 
+        let meta_path = Path::new(&storage_config.storage_path).join(PROPERTIES_PATH);
+        let meta_persistence = CollectionPropertyPersistence::open(meta_path)
+            .expect("Can't open database by the provided config");
+
         let rate_limiter = match storage_config.performance.update_rate_limit {
             Some(limit) => Some(Semaphore::new(limit)),
             None => {
@@ -195,6 +201,7 @@ impl TableOfContent {
             general_runtime,
             optimizer_cpu_budget,
             alias_persistence: RwLock::new(alias_persistence),
+            meta_persistence: RwLock::new(meta_persistence),
             this_peer_id,
             channel_service,
             consensus_proposal_sender,
@@ -339,6 +346,18 @@ impl TableOfContent {
         }
 
         Ok(aliases)
+    }
+
+    pub async fn collection_properties(
+        &self,
+        collection_name: String,
+    ) -> Result<HashMap<String, String>, StorageError> {
+        let persistence = self.meta_persistence.read().await;
+        let all_properties = persistence.get(&collection_name);
+        if let Some(properties) = all_properties {
+            return Ok(properties);
+        }
+        Ok(HashMap::new())
     }
 
     pub async fn suggest_shard_distribution(

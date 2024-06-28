@@ -5532,6 +5532,11 @@
               "$ref": "#/components/schemas/PayloadIndexInfo"
             }
           }
+        },
+        "properties": {
+          "description": "Properties of the collection",
+          "type": "object",
+          "nullable": true
         }
       },
       "CollectionStatus": {

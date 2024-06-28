@@ -1,7 +1,7 @@
 use std::fs::File;
-use std::io::{self, BufReader, BufWriter};
-use std::path::Path;
-use std::result;
+use std::io::{self, BufReader, BufWriter, Write};
+use std::path::{Path, PathBuf};
+use std::{fs, result};
 
 use atomicwrites::{AtomicFile, OverwriteBehavior};
 use serde::de::DeserializeOwned;
@@ -29,6 +29,14 @@ pub fn read_bin<T: DeserializeOwned>(path: &Path) -> Result<T> {
     )?))?)
 }
 
+pub fn init_file(data_path: PathBuf) -> Result<PathBuf> {
+    if !data_path.exists() {
+        let mut file = fs::File::create(&data_path)?;
+        let empty_json = "{}";
+        file.write_all(empty_json.as_bytes())?;
+    }
+    Ok(data_path)
+}
 pub type FileOperationResult<T> = Result<T>;
 pub type FileStorageError = Error;
 

@@ -729,6 +729,11 @@ pub struct CollectionInfo {
     /// Approximate number of indexed vectors in the collection.
     #[prost(uint64, optional, tag = "10")]
     pub indexed_vectors_count: ::core::option::Option<u64>,
+    #[prost(map = "string, string", tag = "11")]
+    pub properties: ::std::collections::HashMap<
+        ::prost::alloc::string::String,
+        ::prost::alloc::string::String,
+    >,
 }
 #[derive(validator::Validate)]
 #[derive(serde::Serialize)]
