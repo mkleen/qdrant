@@ -33,6 +33,32 @@ pub struct CreateAlias {
 
 #[derive(Debug, Deserialize, Serialize, JsonSchema, PartialEq, Eq, Hash, Clone)]
 #[serde(rename_all = "snake_case")]
+pub struct AddProperty {
+    pub collection_name: String,
+    pub property: (String, String),
+}
+
+#[derive(Debug, Deserialize, Serialize, JsonSchema, PartialEq, Eq, Hash, Clone)]
+#[serde(rename_all = "snake_case")]
+pub struct DeleteProperty {
+    pub collection_name: String,
+    pub property_name: String,
+}
+
+#[derive(Debug, Deserialize, Serialize, JsonSchema, PartialEq, Eq, Hash, Clone)]
+#[serde(rename_all = "snake_case")]
+pub struct DeletePropertyOperation {
+    pub delete_property: DeleteProperty,
+}
+
+#[derive(Debug, Deserialize, Serialize, JsonSchema, PartialEq, Eq, Hash, Clone)]
+#[serde(rename_all = "snake_case")]
+pub struct AddPropertyOperation {
+    pub add_property: AddProperty,
+}
+
+#[derive(Debug, Deserialize, Serialize, JsonSchema, PartialEq, Eq, Hash, Clone)]
+#[serde(rename_all = "snake_case")]
 pub struct CreateAliasOperation {
     pub create_alias: CreateAlias,
 }
@@ -74,6 +100,28 @@ pub enum AliasOperations {
     CreateAlias(CreateAliasOperation),
     DeleteAlias(DeleteAliasOperation),
     RenameAlias(RenameAliasOperation),
+}
+
+#[derive(Debug, Deserialize, Serialize, JsonSchema, PartialEq, Eq, Hash, Clone)]
+#[serde(rename_all = "snake_case")]
+#[serde(untagged)]
+pub enum PropertyOperations {
+    AddProperty(AddPropertyOperation),
+    DeleteProperty(DeletePropertyOperation),
+}
+
+impl From<AddProperty> for PropertyOperations {
+    fn from(create_property: AddProperty) -> Self {
+        PropertyOperations::AddProperty(AddPropertyOperation {
+            add_property: create_property,
+        })
+    }
+}
+
+impl From<DeleteProperty> for PropertyOperations {
+    fn from(delete_property: DeleteProperty) -> Self {
+        PropertyOperations::DeleteProperty(DeletePropertyOperation { delete_property })
+    }
 }
 
 impl From<CreateAlias> for AliasOperations {
@@ -287,6 +335,12 @@ pub struct ChangeAliasesOperation {
     pub actions: Vec<AliasOperations>,
 }
 
+#[derive(Debug, Deserialize, Serialize, JsonSchema, Validate, PartialEq, Eq, Hash, Clone)]
+#[serde(rename_all = "snake_case")]
+pub struct ChangePropertyOperation {
+    pub actions: Vec<PropertyOperations>,
+}
+
 /// Operation for deleting collection with given name
 #[derive(Debug, Deserialize, Serialize, PartialEq, Eq, Hash, Clone)]
 #[serde(rename_all = "snake_case")]
@@ -376,6 +430,7 @@ pub enum CollectionMetaOperations {
     UpdateCollection(UpdateCollectionOperation),
     DeleteCollection(DeleteCollectionOperation),
     ChangeAliases(ChangeAliasesOperation),
+    ChangeProperty(ChangePropertyOperation),
     Resharding(CollectionId, ReshardingOperation),
     TransferShard(CollectionId, ShardTransferOperations),
     SetShardReplicaState(SetShardReplicaState),

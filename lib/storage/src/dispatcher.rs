@@ -135,7 +135,8 @@ impl Dispatcher {
 
             let do_sync_nodes = match &op {
                 // Sync nodes after collection or shard key creation
-                CollectionMetaOperations::CreateCollection(_)
+                CollectionMetaOperations::ChangeProperty(_)
+                | CollectionMetaOperations::CreateCollection(_)
                 | CollectionMetaOperations::CreateShardKey(_) => true,
 
                 // Sync nodes when creating or renaming collection aliases

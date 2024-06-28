@@ -63,8 +63,9 @@ pub async fn do_get_collection(
         None => ShardSelectorInternal::All,
         Some(shard_id) => ShardSelectorInternal::ShardId(shard_id),
     };
-
-    Ok(collection.info(&shard_selection).await?)
+    let mut info = collection.info(&shard_selection).await?;
+    info.properties = toc.collection_properties(collection.name()).await?;
+    Ok(info)
 }
 
 pub async fn do_list_collections(

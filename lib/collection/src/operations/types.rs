@@ -126,6 +126,7 @@ pub struct CollectionInfo {
     pub config: CollectionConfig,
     /// Types of stored payload
     pub payload_schema: HashMap<PayloadKeyType, PayloadIndexInfo>,
+    pub properties: HashMap<String, String>,
 }
 
 impl CollectionInfo {
@@ -139,6 +140,7 @@ impl CollectionInfo {
             segments_count: 0,
             config: collection_config,
             payload_schema: HashMap::new(),
+            properties: HashMap::new(),
         }
     }
 }
@@ -154,6 +156,7 @@ impl From<CollectionInfoInternal> for CollectionInfo {
             segments_count: info.segments_count,
             config: info.config,
             payload_schema: info.payload_schema,
+            properties: HashMap::new(),
         }
     }
 }

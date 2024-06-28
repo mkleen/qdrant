@@ -1,10 +1,9 @@
 use std::collections::HashMap;
 use std::fs;
-use std::io::Write;
 use std::path::{Path, PathBuf};
 
 use collection::shards::CollectionId;
-use io::file_operations::{atomic_save_json, read_json};
+use io::file_operations::{atomic_save_json, init_file, read_json};
 use serde::{Deserialize, Serialize};
 
 use crate::content_manager::errors::StorageError;
@@ -40,21 +39,12 @@ impl AliasPersistence {
         path.join(ALIAS_MAPPING_CONFIG_FILE)
     }
 
-    fn init_file(dir_path: &Path) -> Result<PathBuf, StorageError> {
-        let data_path = Self::get_config_path(dir_path);
-        if !data_path.exists() {
-            let mut file = fs::File::create(&data_path)?;
-            let empty_json = "{}";
-            file.write_all(empty_json.as_bytes())?;
-        }
-        Ok(data_path)
-    }
-
     pub fn open(dir_path: PathBuf) -> Result<Self, StorageError> {
         if !dir_path.exists() {
             fs::create_dir_all(&dir_path)?;
         }
-        let data_path = Self::init_file(&dir_path)?;
+        let config_path = Self::get_config_path(&dir_path);
+        let data_path = init_file(config_path)?;
         let alias_mapping = AliasMapping::load(&data_path)?;
         Ok(AliasPersistence {
             data_path,

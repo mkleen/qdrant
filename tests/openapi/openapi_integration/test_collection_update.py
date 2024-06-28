@@ -45,6 +45,9 @@ def test_collection_update():
                 "default_segment_number": 6,
                 "indexing_threshold": 10000,
             },
+            "properties": {
+                "property_key" : "property_value"
+            }
         }
     )
     assert response.ok
@@ -123,6 +126,9 @@ def test_edit_collection_params(on_disk_vectors, on_disk_payload):
             "params": {
                 "on_disk_payload": on_disk_payload,
             },
+            "properties": {
+                "property_key" " property_value"
+            }
         }
     )
     assert response.ok
