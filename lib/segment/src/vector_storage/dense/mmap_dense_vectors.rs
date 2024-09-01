@@ -7,13 +7,13 @@ use std::sync::Arc;
 use bitvec::prelude::BitSlice;
 use common::types::PointOffsetType;
 use memmap2::Mmap;
+use memory::madvise::AdviceSetting;
 use memory::mmap_ops;
+use memory::mmap_type::{MmapBitSlice, MmapFlusher};
 use parking_lot::Mutex;
 
 use crate::common::error_logging::LogError;
-use crate::common::mmap_type::MmapBitSlice;
 use crate::common::operation_error::OperationResult;
-use crate::common::Flusher;
 use crate::data_types::primitive::PrimitiveVectorElement;
 #[cfg(target_os = "linux")]
 use crate::vector_storage::async_io::UringReader;
@@ -25,6 +25,7 @@ const VECTORS_HEADER: &[u8; HEADER_SIZE] = b"data";
 const DELETED_HEADER: &[u8; HEADER_SIZE] = b"drop";
 
 /// Mem-mapped file for dense vectors
+#[derive(Debug)]
 pub struct MmapDenseVectors<T: PrimitiveVectorElement> {
     pub dim: usize,
     pub num_vectors: usize,
@@ -51,15 +52,16 @@ impl<T: PrimitiveVectorElement> MmapDenseVectors<T> {
         // Allocate/open vectors mmap
         ensure_mmap_file_size(vectors_path, VECTORS_HEADER, None)
             .describe("Create mmap data file")?;
-        let mmap = mmap_ops::open_read_mmap(vectors_path).describe("Open mmap for reading")?;
+        let mmap = mmap_ops::open_read_mmap(vectors_path, AdviceSetting::Global)
+            .describe("Open mmap for reading")?;
         let num_vectors = (mmap.len() - HEADER_SIZE) / dim / size_of::<T>();
 
         // Allocate/open deleted mmap
         let deleted_mmap_size = deleted_mmap_size(num_vectors);
         ensure_mmap_file_size(deleted_path, DELETED_HEADER, Some(deleted_mmap_size as u64))
             .describe("Create mmap deleted file")?;
-        let deleted_mmap =
-            mmap_ops::open_write_mmap(deleted_path).describe("Open mmap deleted for writing")?;
+        let deleted_mmap = mmap_ops::open_write_mmap(deleted_path, AdviceSetting::Global)
+            .describe("Open mmap deleted for writing")?;
 
         // Advise kernel that we'll need this page soon so the kernel can prepare
         #[cfg(unix)]
@@ -94,7 +96,7 @@ impl<T: PrimitiveVectorElement> MmapDenseVectors<T> {
         self.uring_reader.lock().is_some()
     }
 
-    pub fn flusher(&self) -> Flusher {
+    pub fn flusher(&self) -> MmapFlusher {
         self.deleted.flusher()
     }
 
@@ -174,12 +176,11 @@ impl<T: PrimitiveVectorElement> MmapDenseVectors<T> {
         &self,
         points: impl Iterator<Item = PointOffsetType>,
         mut callback: impl FnMut(usize, PointOffsetType, &[T]),
-    ) -> OperationResult<()> {
+    ) {
         for (idx, point) in points.enumerate() {
             let vector = self.get_vector(point);
             callback(idx, point, vector);
         }
-        Ok(())
     }
 
     /// Reads vectors for the given ids and calls the callback for each vector.
@@ -197,7 +198,8 @@ impl<T: PrimitiveVectorElement> MmapDenseVectors<T> {
 
         #[cfg(not(target_os = "linux"))]
         {
-            self.process_points_simple(points, callback)
+            self.process_points_simple(points, callback);
+            Ok(())
         }
     }
 }

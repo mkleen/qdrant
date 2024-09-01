@@ -1,8 +1,15 @@
-use std::fmt;
-
 pub mod driver;
 pub mod tasks_pool;
 
+mod stage_commit_read_hashring;
+mod stage_commit_write_hashring;
+mod stage_finalize;
+mod stage_init;
+mod stage_migrate_points;
+mod stage_propagate_deletes;
+mod stage_replicate;
+
+use std::fmt;
 use std::future::Future;
 use std::path::PathBuf;
 use std::sync::Arc;
@@ -21,6 +28,7 @@ use super::shard::{PeerId, ShardId};
 use super::transfer::ShardTransferConsensus;
 use crate::common::stoppable_task_async::{spawn_async_cancellable, CancellableAsyncTaskHandle};
 use crate::config::CollectionConfig;
+use crate::operations::cluster_ops::ReshardingDirection;
 use crate::operations::shared_storage_config::SharedStorageConfig;
 use crate::shards::channel_service::ChannelService;
 use crate::shards::shard_holder::LockedShardHolder;
@@ -34,12 +42,19 @@ pub struct ReshardState {
     pub peer_id: PeerId,
     pub shard_id: ShardId,
     pub shard_key: Option<ShardKey>,
+    pub direction: ReshardingDirection,
     pub stage: ReshardStage,
 }
 
 impl ReshardState {
-    pub fn new(peer_id: PeerId, shard_id: ShardId, shard_key: Option<ShardKey>) -> Self {
+    pub fn new(
+        direction: ReshardingDirection,
+        peer_id: PeerId,
+        shard_id: ShardId,
+        shard_key: Option<ShardKey>,
+    ) -> Self {
         Self {
+            direction,
             peer_id,
             shard_id,
             shard_key,
@@ -48,13 +63,15 @@ impl ReshardState {
     }
 
     pub fn matches(&self, key: &ReshardKey) -> bool {
-        self.peer_id == key.peer_id
+        self.direction == key.direction
+            && self.peer_id == key.peer_id
             && self.shard_id == key.shard_id
             && self.shard_key == key.shard_key
     }
 
     pub fn key(&self) -> ReshardKey {
         ReshardKey {
+            direction: self.direction,
             peer_id: self.peer_id,
             shard_id: self.shard_id,
             shard_key: self.shard_key.clone(),
@@ -62,6 +79,11 @@ impl ReshardState {
     }
 }
 
+/// Reshard stages
+///
+/// # Warning
+///
+/// This enum is ordered!
 #[derive(Copy, Clone, Debug, Default, Eq, PartialEq, Ord, PartialOrd, Deserialize, Serialize)]
 #[serde(rename_all = "snake_case")]
 pub enum ReshardStage {
@@ -74,6 +96,7 @@ pub enum ReshardStage {
 /// Unique identifier of a resharding task
 #[derive(Clone, Debug, Eq, PartialEq, Hash, Deserialize, Serialize, JsonSchema)]
 pub struct ReshardKey {
+    pub direction: ReshardingDirection,
     pub peer_id: PeerId,
     pub shard_id: ShardId,
     pub shard_key: Option<ShardKey>,
@@ -97,7 +120,7 @@ pub fn spawn_resharding_task<T, F>(
     collection_config: Arc<RwLock<CollectionConfig>>,
     shared_storage_config: Arc<SharedStorageConfig>,
     channel_service: ChannelService,
-    temp_dir: PathBuf,
+    can_resume: bool,
     on_finish: T,
     on_error: F,
 ) -> CancellableAsyncTaskHandle<bool>
@@ -129,7 +152,7 @@ where
                     collection_config.clone(),
                     &shared_storage_config,
                     channel_service.clone(),
-                    &temp_dir,
+                    can_resume,
                 )
                 .await
             };

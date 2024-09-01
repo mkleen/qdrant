@@ -3,7 +3,7 @@ use std::collections::BTreeMap;
 use collection::config::{CollectionConfig, ShardingMethod};
 use collection::operations::config_diff::{
     CollectionParamsDiff, HnswConfigDiff, OptimizersConfigDiff, QuantizationConfigDiff,
-    WalConfigDiff,
+    StrictModeConfig, WalConfigDiff,
 };
 use collection::operations::types::{
     SparseVectorParams, SparseVectorsConfig, VectorsConfig, VectorsConfigDiff,
@@ -108,12 +108,13 @@ pub struct CreateCollection {
     /// Vector data config.
     /// It is possible to provide one config for single vector mode and list of configs for multiple vectors mode.
     #[serde(default)]
-    #[validate]
+    #[validate(nested)]
     pub vectors: VectorsConfig,
     /// For auto sharding:
     /// Number of shards in collection.
     ///  - Default is 1 for standalone, otherwise equal to the number of nodes
     ///  - Minimum is 1
+    ///
     /// For custom sharding:
     /// Number of shards in collection per shard group.
     ///  - Default is 1, meaning that each shard key will be mapped to a single shard
@@ -146,25 +147,29 @@ pub struct CreateCollection {
     #[serde(default)]
     pub on_disk_payload: Option<bool>,
     /// Custom params for HNSW index. If none - values from service configuration file are used.
-    #[validate]
+    #[validate(nested)]
     pub hnsw_config: Option<HnswConfigDiff>,
     /// Custom params for WAL. If none - values from service configuration file are used.
-    #[validate]
+    #[validate(nested)]
     pub wal_config: Option<WalConfigDiff>,
     /// Custom params for Optimizers.  If none - values from service configuration file are used.
     #[serde(alias = "optimizer_config")]
-    #[validate]
+    #[validate(nested)]
     pub optimizers_config: Option<OptimizersConfigDiff>,
     /// Specify other collection to copy data from.
     #[serde(default)]
     pub init_from: Option<InitFrom>,
     /// Quantization parameters. If none - quantization is disabled.
     #[serde(default, alias = "quantization")]
-    #[validate]
+    #[validate(nested)]
     pub quantization_config: Option<QuantizationConfig>,
     /// Sparse vector data config.
-    #[validate]
+    #[validate(nested)]
     pub sparse_vectors: Option<BTreeMap<String, SparseVectorParams>>,
+    /// Strict-mode config.
+    #[validate(nested)]
+    #[schemars(skip)]
+    pub strict_mode_config: Option<StrictModeConfig>,
 }
 
 /// Operation for creating new collection and (optionally) specify index params
@@ -204,7 +209,7 @@ impl CreateCollectionOperation {
 pub struct UpdateCollection {
     /// Map of vector data parameters to update for each named vector.
     /// To update parameters in a collection having a single unnamed vector, use an empty string as name.
-    #[validate]
+    #[validate(nested)]
     pub vectors: Option<VectorsConfigDiff>,
     /// Custom params for Optimizers.  If none - it is left unchanged.
     /// This operation is blocking, it will only proceed once all current optimizations are complete
@@ -213,14 +218,14 @@ pub struct UpdateCollection {
     /// Collection base params. If none - it is left unchanged.
     pub params: Option<CollectionParamsDiff>,
     /// HNSW parameters to update for the collection index. If none - it is left unchanged.
-    #[validate]
+    #[validate(nested)]
     pub hnsw_config: Option<HnswConfigDiff>,
     /// Quantization parameters to update. If none - it is left unchanged.
     #[serde(default, alias = "quantization")]
-    #[validate]
+    #[validate(nested)]
     pub quantization_config: Option<QuantizationConfigDiff>,
     /// Map of sparse vector data parameters to update for each sparse vector.
-    #[validate]
+    #[validate(nested)]
     pub sparse_vectors: Option<SparseVectorsConfig>,
 }
 
@@ -255,14 +260,6 @@ impl UpdateCollectionOperation {
             update_collection,
             shard_replica_changes: None,
         }
-    }
-
-    // Returns `true` if there are replica changes associated with this operation
-    pub fn have_replica_changes(&self) -> bool {
-        self.shard_replica_changes
-            .as_ref()
-            .map(|changes| !changes.is_empty())
-            .unwrap_or(false)
     }
 
     pub fn take_shard_replica_changes(&mut self) -> Option<Vec<replica_set::Change>> {
@@ -405,6 +402,7 @@ impl From<CollectionConfig> for CreateCollection {
             init_from: None,
             quantization_config: value.quantization_config,
             sparse_vectors: value.params.sparse_vectors,
+            strict_mode_config: value.strict_mode_config,
         }
     }
 }

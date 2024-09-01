@@ -5,11 +5,13 @@ use crate::data_types::primitive::PrimitiveVectorElement;
 
 // This is a mock implementation of the async_io module for those platforms that don't support io_uring.
 #[allow(dead_code)]
+#[derive(Debug)]
 pub struct UringReader<T: PrimitiveVectorElement> {
     _phantom: std::marker::PhantomData<T>,
 }
 
 #[allow(dead_code)]
+#[allow(clippy::unnecessary_wraps)] // Using the same type as the real implementation
 impl<T: PrimitiveVectorElement> UringReader<T> {
     pub fn new(_file: File, _raw_size: usize, _header_size: usize) -> OperationResult<Self> {
         Ok(Self {

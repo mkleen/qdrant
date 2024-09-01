@@ -1,13 +1,15 @@
 pub mod anonymize;
 pub mod error_logging;
 pub mod macros;
-pub mod mmap_type;
+pub mod mmap_bitslice_buffered_update_wrapper;
+pub mod mmap_slice_buffered_update_wrapper;
 pub mod operation_error;
 pub mod operation_time_statistics;
 pub mod reciprocal_rank_fusion;
 pub mod rocksdb_buffered_delete_wrapper;
 pub mod rocksdb_buffered_update_wrapper;
 pub mod rocksdb_wrapper;
+pub mod score_fusion;
 pub mod utils;
 pub mod validate_snapshot_archive;
 pub mod vector_utils;
@@ -20,7 +22,6 @@ use crate::data_types::vectors::{QueryVector, VectorRef};
 use crate::types::{SegmentConfig, SparseVectorDataConfig, VectorDataConfig};
 
 pub type Flusher = Box<dyn FnOnce() -> OperationResult<()> + Send>;
-
 /// Check that the given vector name is part of the segment config.
 ///
 /// Returns an error if incompatible.

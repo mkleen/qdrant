@@ -6,6 +6,7 @@ use std::time::Duration;
 
 use async_trait::async_trait;
 use common::types::TelemetryDetail;
+use segment::data_types::facets::{FacetParams, FacetResponse};
 use segment::data_types::order_by::OrderBy;
 use segment::types::{
     ExtendedPointId, Filter, PointIdType, ScoredPoint, WithPayload, WithPayloadInterface,
@@ -155,7 +156,10 @@ impl ShardOperation for ProxyShard {
                 if cardinality.max > MAX_CHANGES_TRACKED_COUNT {
                     PointsOperationEffect::Many
                 } else {
-                    let points = local_shard.read_filtered(Some(&filter))?;
+                    let runtime_handle = self.wrapped_shard.search_runtime.clone();
+                    let points = local_shard
+                        .read_filtered(Some(&filter), &runtime_handle)
+                        .await?;
                     PointsOperationEffect::Some(points.into_iter().collect())
                 }
             }
@@ -194,6 +198,7 @@ impl ShardOperation for ProxyShard {
         filter: Option<&Filter>,
         search_runtime_handle: &Handle,
         order_by: Option<&OrderBy>,
+        timeout: Option<Duration>,
     ) -> CollectionResult<Vec<Record>> {
         let local_shard = &self.wrapped_shard;
         local_shard
@@ -205,6 +210,7 @@ impl ShardOperation for ProxyShard {
                 filter,
                 search_runtime_handle,
                 order_by,
+                timeout,
             )
             .await
     }
@@ -229,9 +235,16 @@ impl ShardOperation for ProxyShard {
     }
 
     /// Forward read-only `count` to `wrapped_shard`
-    async fn count(&self, request: Arc<CountRequestInternal>) -> CollectionResult<CountResult> {
+    async fn count(
+        &self,
+        request: Arc<CountRequestInternal>,
+        search_runtime_handle: &Handle,
+        timeout: Option<Duration>,
+    ) -> CollectionResult<CountResult> {
         let local_shard = &self.wrapped_shard;
-        local_shard.count(request).await
+        local_shard
+            .count(request, search_runtime_handle, timeout)
+            .await
     }
 
     /// Forward read-only `retrieve` to `wrapped_shard`
@@ -240,10 +253,18 @@ impl ShardOperation for ProxyShard {
         request: Arc<PointRequestInternal>,
         with_payload: &WithPayload,
         with_vector: &WithVector,
+        search_runtime_handle: &Handle,
+        timeout: Option<Duration>,
     ) -> CollectionResult<Vec<Record>> {
         let local_shard = &self.wrapped_shard;
         local_shard
-            .retrieve(request, with_payload, with_vector)
+            .retrieve(
+                request,
+                with_payload,
+                with_vector,
+                search_runtime_handle,
+                timeout,
+            )
             .await
     }
 
@@ -257,6 +278,18 @@ impl ShardOperation for ProxyShard {
         let local_shard = &self.wrapped_shard;
         local_shard
             .query_batch(request, search_runtime_handle, timeout)
+            .await
+    }
+
+    async fn facet(
+        &self,
+        request: Arc<FacetParams>,
+        search_runtime_handle: &Handle,
+        timeout: Option<Duration>,
+    ) -> CollectionResult<FacetResponse> {
+        let local_shard = &self.wrapped_shard;
+        local_shard
+            .facet(request, search_runtime_handle, timeout)
             .await
     }
 }

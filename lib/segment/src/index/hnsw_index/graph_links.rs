@@ -46,7 +46,7 @@ for lvl > 0:
 links offset = level_offsets[level] + offsets[reindex[point_id]]
 */
 
-#[derive(Default)]
+#[derive(Debug, Default)]
 struct GraphLinksFileHeader {
     pub point_count: u64,
     pub levels_count: u64,
@@ -218,10 +218,6 @@ impl GraphLinksConverter {
         }
     }
 
-    pub fn set_path(&mut self, path: PathBuf) {
-        self.path = Some(path);
-    }
-
     fn get_header(&self) -> GraphLinksFileHeader {
         GraphLinksFileHeader::new(
             self.reindex.len(),
@@ -285,12 +281,6 @@ impl GraphLinksConverter {
                 mmap_ops::transmute_from_u8_to_mut_slice(level_offsets_byte_slice);
             level_offsets_slice.copy_from_slice(&level_offsets);
         }
-    }
-
-    pub fn to_bytes(&self) -> Vec<u8> {
-        let mut bytes = vec![0; self.data_size() as usize];
-        self.serialize_to(&mut bytes);
-        bytes
     }
 
     pub fn save_as(&mut self, path: &Path) -> OperationResult<()> {
@@ -410,7 +400,7 @@ pub trait GraphLinks: Default {
     }
 }
 
-#[derive(Default)]
+#[derive(Debug, Default)]
 pub struct GraphLinksRam {
     // all flattened links of all levels
     links: Vec<PointOffsetType>,
@@ -510,7 +500,7 @@ impl GraphLinks for GraphLinksRam {
     }
 }
 
-#[derive(Default)]
+#[derive(Debug, Default)]
 pub struct GraphLinksMmap {
     mmap: Option<Arc<Mmap>>,
     header: GraphLinksFileHeader,

@@ -3,6 +3,7 @@ use std::sync::Arc;
 use std::time::Duration;
 
 use async_trait::async_trait;
+use segment::data_types::facets::{FacetParams, FacetResponse};
 use segment::data_types::order_by::OrderBy;
 use segment::types::{
     ExtendedPointId, Filter, ScoredPoint, WithPayload, WithPayloadInterface, WithVector,
@@ -72,6 +73,7 @@ impl ShardOperation for DummyShard {
         _: Option<&Filter>,
         _: &Handle,
         _: Option<&OrderBy>,
+        _: Option<Duration>,
     ) -> CollectionResult<Vec<Record>> {
         self.dummy()
     }
@@ -89,7 +91,12 @@ impl ShardOperation for DummyShard {
         self.dummy()
     }
 
-    async fn count(&self, _: Arc<CountRequestInternal>) -> CollectionResult<CountResult> {
+    async fn count(
+        &self,
+        _: Arc<CountRequestInternal>,
+        _: &Handle,
+        _: Option<Duration>,
+    ) -> CollectionResult<CountResult> {
         self.dummy()
     }
 
@@ -98,6 +105,8 @@ impl ShardOperation for DummyShard {
         _: Arc<PointRequestInternal>,
         _: &WithPayload,
         _: &WithVector,
+        _: &Handle,
+        _: Option<Duration>,
     ) -> CollectionResult<Vec<Record>> {
         self.dummy()
     }
@@ -108,6 +117,15 @@ impl ShardOperation for DummyShard {
         _search_runtime_handle: &Handle,
         _timeout: Option<Duration>,
     ) -> CollectionResult<Vec<ShardQueryResponse>> {
+        self.dummy()
+    }
+
+    async fn facet(
+        &self,
+        _: Arc<FacetParams>,
+        _search_runtime_handle: &Handle,
+        _: Option<Duration>,
+    ) -> CollectionResult<FacetResponse> {
         self.dummy()
     }
 }

@@ -11,6 +11,7 @@ use crate::payload_storage::simple_payload_storage::SimplePayloadStorage;
 use crate::payload_storage::PayloadStorage;
 use crate::types::Payload;
 
+#[derive(Debug)]
 pub enum PayloadStorageEnum {
     #[cfg(feature = "testing")]
     InMemoryPayloadStorage(InMemoryPayloadStorage),
@@ -52,6 +53,15 @@ impl PayloadStorageEnum {
 }
 
 impl PayloadStorage for PayloadStorageEnum {
+    fn assign_all(&mut self, point_id: PointOffsetType, payload: &Payload) -> OperationResult<()> {
+        match self {
+            #[cfg(feature = "testing")]
+            PayloadStorageEnum::InMemoryPayloadStorage(s) => s.assign_all(point_id, payload),
+            PayloadStorageEnum::SimplePayloadStorage(s) => s.assign_all(point_id, payload),
+            PayloadStorageEnum::OnDiskPayloadStorage(s) => s.assign_all(point_id, payload),
+        }
+    }
+
     fn assign(&mut self, point_id: PointOffsetType, payload: &Payload) -> OperationResult<()> {
         match self {
             #[cfg(feature = "testing")]
@@ -129,7 +139,6 @@ mod tests {
 
     use super::*;
     use crate::common::rocksdb_wrapper::{open_db, DB_VECTOR_CF};
-    use crate::json_path::path;
     use crate::types::Payload;
 
     #[test]
@@ -177,7 +186,7 @@ mod tests {
             let partial_payload: Payload = serde_json::from_str(r#"{ "age": 53 }"#).unwrap();
             storage.assign(100, &partial_payload).unwrap();
 
-            storage.delete(100, &path("location.geo")).unwrap();
+            storage.delete(100, &JsonPath::new("location.geo")).unwrap();
 
             let res = storage.payload(100).unwrap();
 
@@ -201,8 +210,10 @@ mod tests {
                 serde_json::from_str(r#"{ "hobby": "vector search" }"#).unwrap();
             storage.assign(100, &partial_payload).unwrap();
 
-            storage.delete(100, &path("location.city")).unwrap();
-            storage.delete(100, &path("location")).unwrap();
+            storage
+                .delete(100, &JsonPath::new("location.city"))
+                .unwrap();
+            storage.delete(100, &JsonPath::new("location")).unwrap();
 
             let res = storage.payload(100).unwrap();
 

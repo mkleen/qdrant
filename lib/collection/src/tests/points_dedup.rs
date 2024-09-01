@@ -55,6 +55,7 @@ async fn fixture() -> Collection {
         wal_config,
         hnsw_config: Default::default(),
         quantization_config: Default::default(),
+        strict_mode_config: Default::default(),
     };
 
     let collection_dir = Builder::new().prefix("test_collection").tempdir().unwrap();
@@ -105,7 +106,7 @@ async fn fixture() -> Collection {
         let op = OperationWithClockTag::from(CollectionUpdateOperations::PointOperation(
             PointOperations::UpsertPoints(PointInsertOperationsInternal::PointsList(vec![
                 PointStruct {
-                    id: (*shard_id as u64).into(),
+                    id: u64::from(*shard_id).into(),
                     vector: VectorStruct::Single(
                         (0..DIM).map(|_| rng.gen_range(0.0..1.0)).collect(),
                     ),
@@ -160,6 +161,7 @@ async fn test_scroll_dedup() {
             },
             None,
             &ShardSelectorInternal::All,
+            None,
         )
         .await
         .expect("failed to search");
@@ -186,6 +188,7 @@ async fn test_scroll_dedup() {
             },
             None,
             &ShardSelectorInternal::All,
+            None,
         )
         .await
         .expect("failed to search");
@@ -195,7 +198,7 @@ async fn test_scroll_dedup() {
     for point_id in result.points.iter().map(|point| point.id) {
         assert!(
             seen.insert(point_id),
-            "got point id {point_id} more than once, they should be deduplicated",
+            "got point id {point_id:?} more than once, they should be deduplicated",
         );
     }
 }
@@ -207,7 +210,7 @@ async fn test_retrieve_dedup() {
     let records = collection
         .retrieve(
             PointRequestInternal {
-                ids: (0..SHARD_COUNT as u64)
+                ids: (0..u64::from(SHARD_COUNT))
                     .map(ExtendedPointId::from)
                     .chain([DUPLICATE_POINT_ID])
                     .collect(),
@@ -216,6 +219,7 @@ async fn test_retrieve_dedup() {
             },
             None,
             &ShardSelectorInternal::All,
+            None,
         )
         .await
         .expect("failed to search");

@@ -21,10 +21,10 @@ pub const DB_VERSIONS_CF: &str = "version";
 /// If there is no Column Family specified, key-value pair is associated with Column Family "default".
 pub const DB_DEFAULT_CF: &str = "default";
 
-#[derive(Clone)]
+#[derive(Clone, Debug)]
 pub struct DatabaseColumnWrapper {
-    pub database: Arc<RwLock<DB>>,
-    pub column_name: String,
+    database: Arc<RwLock<DB>>,
+    column_name: String,
 }
 
 pub struct DatabaseColumnIterator<'a> {
@@ -49,6 +49,7 @@ pub fn db_options() -> Options {
     options.set_delete_obsolete_files_period_micros(DB_DELETE_OBSOLETE_FILES_PERIOD);
     options.create_missing_column_families(true);
     options.set_max_open_files(DB_MAX_OPEN_FILES as i32);
+    options.set_compression_type(rocksdb::DBCompressionType::Lz4);
 
     // Qdrant relies on it's own WAL for durability
     options.set_wal_recovery_mode(DBRecoveryMode::TolerateCorruptedTailRecords);
@@ -90,28 +91,6 @@ pub fn open_db_with_existing_cf(path: &Path) -> Result<Arc<RwLock<DB>>, rocksdb:
     };
     let db = DB::open_cf(&db_options(), path, existing_column_families)?;
     Ok(Arc::new(RwLock::new(db)))
-}
-
-pub fn create_db_cf_if_not_exists(
-    db: Arc<RwLock<DB>>,
-    store_cf_name: &str,
-) -> Result<(), rocksdb::Error> {
-    let mut db_mut = db.write();
-    if db_mut.cf_handle(store_cf_name).is_none() {
-        db_mut.create_cf(store_cf_name, &db_options())?;
-    }
-    Ok(())
-}
-
-pub fn recreate_cf(db: Arc<RwLock<DB>>, store_cf_name: &str) -> Result<(), rocksdb::Error> {
-    let mut db_mut = db.write();
-
-    if db_mut.cf_handle(store_cf_name).is_some() {
-        db_mut.drop_cf(store_cf_name)?;
-    }
-
-    db_mut.create_cf(store_cf_name, &db_options())?;
-    Ok(())
 }
 
 impl DatabaseColumnWrapper {
@@ -253,6 +232,14 @@ impl DatabaseColumnWrapper {
                 &self.column_name
             ))
         })
+    }
+
+    pub fn get_database(&self) -> Arc<RwLock<DB>> {
+        self.database.clone()
+    }
+
+    pub fn get_column_name(&self) -> &str {
+        &self.column_name
     }
 }
 

@@ -117,6 +117,7 @@ async fn happy_lookup_ids() {
         collection_by_name,
         read_consistency,
         &shard_selection,
+        None,
     )
     .await;
 
@@ -138,7 +139,7 @@ async fn happy_lookup_ids() {
     for (id_value, vector) in values.into_iter().zip(expected_vectors) {
         let record = result
             .get(&id_value)
-            .unwrap_or_else(|| panic!("Expected to find record for id {}", id_value));
+            .unwrap_or_else(|| panic!("Expected to find record for id {id_value}"));
 
         assert_eq!(record.id, PointIdType::try_from(id_value.clone()).unwrap());
         assert_eq!(
@@ -205,6 +206,7 @@ async fn nonexistent_lookup_ids_are_ignored(#[case] value: impl Into<PseudoId>) 
         collection_by_name,
         read_consistency,
         &shard_selection,
+        None,
     )
     .await;
 
@@ -237,6 +239,7 @@ async fn err_when_collection_by_name_returns_none() {
         collection_by_name,
         read_consistency,
         &shard_selection,
+        None,
     )
     .await;
 

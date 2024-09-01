@@ -15,7 +15,6 @@ use collection::shards::shard::PeerId;
 #[cfg(target_os = "linux")]
 use common::cpu::linux_high_thread_priority;
 use common::defaults;
-use prost::Message as _;
 use raft::eraftpb::Message as RaftMessage;
 use raft::prelude::*;
 use raft::{SoftState, StateRole, INVALID_ID};
@@ -325,7 +324,7 @@ impl Consensus {
             .add_peer_to_known(tonic::Request::new(
                 api::grpc::qdrant::AddPeerToKnownMessage {
                     uri: current_uri,
-                    port: Some(p2p_port as u32),
+                    port: Some(u32::from(p2p_port)),
                     id: this_peer_id,
                 },
             ))
@@ -523,9 +522,8 @@ impl Consensus {
             // Timeout defines how long can we wait for the next message.
             // Since this thread is sync, we can't wait indefinitely.
             // Timeout is set up to be about the time of tick.
-            let message = match self.recv_update(timeout_at) {
-                Ok(message) => message,
-                Err(_) => break,
+            let Ok(message) = self.recv_update(timeout_at) else {
+                break;
             };
 
             // Those messages should not be batched, so we interrupt the loop if we see them.
@@ -1121,7 +1119,8 @@ impl RaftMessageSender {
         let uri = self.uri(peer_id).await?;
 
         let mut bytes = Vec::new();
-        RaftMessage::encode(message, &mut bytes).context("failed to encode Raft message")?;
+        <RaftMessage as prost_for_raft::Message>::encode(message, &mut bytes)
+            .context("failed to encode Raft message")?;
         let grpc_message = GrpcRaftMessage { message: bytes };
 
         let timeout = Duration::from_millis(
@@ -1345,6 +1344,7 @@ mod tests {
                             init_from: None,
                             quantization_config: None,
                             sharding_method: None,
+                            strict_mode_config: None,
                         },
                     )),
                     Access::full("For test"),

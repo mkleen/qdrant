@@ -1,4 +1,6 @@
 mod collection_ops;
+pub mod distance_matrix;
+mod facet;
 pub mod payload_index_schema;
 mod point_ops;
 pub mod query;
@@ -27,6 +29,7 @@ use crate::collection::payload_index_schema::PayloadIndexSchema;
 use crate::collection_state::{ShardInfo, State};
 use crate::common::is_ready::IsReady;
 use crate::config::CollectionConfig;
+use crate::operations::cluster_ops::ReshardingDirection;
 use crate::operations::config_diff::{DiffConfig, OptimizersConfigDiff};
 use crate::operations::shared_storage_config::SharedStorageConfig;
 use crate::operations::types::{CollectionError, CollectionResult, NodeType};
@@ -398,7 +401,25 @@ impl Collection {
             }
         }
 
-        // TODO(resharding): 🤔
+        // Abort resharding, if resharding shard is marked as `Dead`.
+        //
+        // This branch should only be triggered, if resharding is currently at
+        // `ReshardStage::MigratingPoints` stage, because resharding shard should be marked as
+        // `Active` when all resharding transfers are successfully completed, and so the check
+        // *right above* this one should be triggered.
+        //
+        // So, if resharding reached `ReshardingStage::ReadHashRingCommitted`, this branch *won't*
+        // be triggered, and in this case, resharding *won't* be cancelled. Though, the update
+        // request should *fail* with "failed to update all replicas of a shard" error.
+        //
+        // If resharding reached `ReshardingStage::WriteHashRingCommitted`, and this branch is
+        // triggered *somehow*, then `Collection::abort_resharding` call should return an error,
+        // so no special handling is needed for `ReshardingStage::WriteHashRingCommitted`.
+        //
+        // TODO(resharding):
+        //
+        // Abort resharding, if resharding shard is (being) marked as `Dead` and resharding is at
+        // `ReshardingStage::ReadHashRingCommitted` stage!? 🤔
         if current_state == Some(ReplicaState::Resharding) && state == ReplicaState::Dead {
             let shard_key = shard_holder
                 .get_shard_id_to_key_mapping()
@@ -407,11 +428,16 @@ impl Collection {
 
             drop(shard_holder);
 
-            self.abort_resharding(ReshardKey {
-                peer_id,
-                shard_id,
-                shard_key,
-            })
+            self.abort_resharding(
+                ReshardKey {
+                    // Always up when setting resharding replica set state
+                    direction: ReshardingDirection::Up,
+                    peer_id,
+                    shard_id,
+                    shard_key,
+                },
+                false,
+            )
             .await?;
 
             // TODO(resharding): Abort all resharding transfers!?
@@ -509,6 +535,22 @@ impl Collection {
     }
 
     pub async fn remove_shards_at_peer(&self, peer_id: PeerId) -> CollectionResult<()> {
+        // Abort resharding, if shards are removed from peer driving resharding
+        // (which *usually* means the *peer* is being removed from consensus)
+        let resharding_state = self
+            .resharding_state()
+            .await
+            .filter(|state| state.peer_id == peer_id);
+
+        if let Some(state) = resharding_state {
+            if let Err(err) = self.abort_resharding(state.key(), true).await {
+                log::error!(
+                    "Failed to abort resharding {} while removing peer {peer_id}: {err}",
+                    state.key(),
+                );
+            }
+        }
+
         self.shards_holder
             .read()
             .await
@@ -688,7 +730,7 @@ impl Collection {
     }
 
     pub async fn get_telemetry_data(&self, detail: TelemetryDetail) -> CollectionTelemetry {
-        let (shards_telemetry, transfers) = {
+        let (shards_telemetry, transfers, resharding) = {
             let mut shards_telemetry = Vec::new();
             let shards_holder = self.shards_holder.read().await;
             for shard in shards_holder.all_shards() {
@@ -697,6 +739,7 @@ impl Collection {
             (
                 shards_telemetry,
                 shards_holder.get_shard_transfer_info(&*self.transfer_tasks.lock().await),
+                shards_holder.get_resharding_operations_info(&*self.reshard_tasks.lock().await),
             )
         };
 
@@ -706,6 +749,7 @@ impl Collection {
             config: self.collection_config.read().await.clone(),
             shards: shards_telemetry,
             transfers,
+            resharding,
         }
     }
 
@@ -729,10 +773,6 @@ impl Collection {
 
     pub fn request_shard_transfer(&self, shard_transfer: ShardTransfer) {
         self.request_shard_transfer_cb.deref()(shard_transfer)
-    }
-
-    pub fn shared_storage_config(&self) -> Arc<SharedStorageConfig> {
-        self.shared_storage_config.clone()
     }
 
     pub fn snapshots_path(&self) -> &Path {

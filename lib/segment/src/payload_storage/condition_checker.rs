@@ -69,7 +69,10 @@ impl ValueChecker for FieldCondition {
 
     fn check(&self, payload: &Value) -> bool {
         if self.values_count.is_some() {
-            self.values_count.as_ref().unwrap().check_count(payload)
+            self.values_count
+                .as_ref()
+                .unwrap()
+                .check_count_from(payload)
         } else {
             self._check(payload)
         }
@@ -81,7 +84,7 @@ impl ValueChecker for Match {
         match self {
             Match::Value(MatchValue { value }) => match (payload, value) {
                 (Value::Bool(stored), ValueVariants::Bool(val)) => stored == val,
-                (Value::String(stored), ValueVariants::Keyword(val)) => stored == val,
+                (Value::String(stored), ValueVariants::String(val)) => stored == val,
                 (Value::Number(stored), ValueVariants::Integer(val)) => {
                     stored.as_i64().map(|num| num == *val).unwrap_or(false)
                 }
@@ -92,7 +95,7 @@ impl ValueChecker for Match {
                 _ => false,
             },
             Match::Any(MatchAny { any }) => match (payload, any) {
-                (Value::String(stored), AnyVariants::Keywords(list)) => {
+                (Value::String(stored), AnyVariants::Strings(list)) => {
                     if list.len() < INDEXSET_ITER_THRESHOLD {
                         list.iter().any(|i| i.as_str() == stored.as_str())
                     } else {
@@ -112,7 +115,7 @@ impl ValueChecker for Match {
                 _ => false,
             },
             Match::Except(MatchExcept { except }) => match (payload, except) {
-                (Value::String(stored), AnyVariants::Keywords(list)) => {
+                (Value::String(stored), AnyVariants::Strings(list)) => {
                     if list.len() < INDEXSET_ITER_THRESHOLD {
                         !list.iter().any(|i| i.as_str() == stored.as_str())
                     } else {
@@ -214,11 +217,11 @@ impl ValueChecker for GeoPolygon {
 
 impl ValueChecker for ValuesCount {
     fn check_match(&self, payload: &Value) -> bool {
-        self.check_count(payload)
+        self.check_count_from(payload)
     }
 
     fn check(&self, payload: &Value) -> bool {
-        self.check_count(payload)
+        self.check_count_from(payload)
     }
 }
 

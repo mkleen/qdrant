@@ -2,19 +2,21 @@ use std::cmp::{max, min};
 use std::collections::{BTreeMap, BTreeSet, BinaryHeap, HashMap, HashSet};
 use std::ops::Deref;
 use std::path::Path;
-use std::sync::atomic::{AtomicUsize, Ordering};
+use std::sync::atomic::{AtomicBool, AtomicUsize, Ordering};
 use std::sync::Arc;
 use std::thread::sleep;
 use std::time::{Duration, Instant};
 
+use common::iterator_ext::IteratorExt;
 use io::storage_version::StorageVersion;
 use parking_lot::{RwLock, RwLockReadGuard, RwLockUpgradableReadGuard, RwLockWriteGuard};
 use rand::seq::SliceRandom;
 use segment::common::operation_error::{OperationError, OperationResult};
+use segment::data_types::named_vectors::NamedVectors;
 use segment::entry::entry_point::SegmentEntry;
 use segment::segment::{Segment, SegmentVersion};
 use segment::segment_constructor::build_segment;
-use segment::types::{PointIdType, SegmentConfig, SeqNumberType};
+use segment::types::{Payload, PointIdType, SegmentConfig, SeqNumberType};
 
 use crate::collection::payload_index_schema::PayloadIndexSchema;
 use crate::collection_manager::holders::proxy_segment::ProxySegment;
@@ -29,6 +31,7 @@ const DROP_DATA_TIMEOUT: Duration = Duration::from_secs(60 * 60);
 
 /// Object, which unifies the access to different types of segments, but still allows to
 /// access the original type of the segment if it is required for more efficient operations.
+#[derive(Clone, Debug)]
 pub enum LockedSegment {
     Original(Arc<RwLock<Segment>>),
     Proxy(Arc<RwLock<ProxySegment>>),
@@ -115,15 +118,6 @@ impl LockedSegment {
     }
 }
 
-impl Clone for LockedSegment {
-    fn clone(&self) -> Self {
-        match self {
-            LockedSegment::Original(x) => LockedSegment::Original(x.clone()),
-            LockedSegment::Proxy(x) => LockedSegment::Proxy(x.clone()),
-        }
-    }
-}
-
 impl From<Segment> for LockedSegment {
     fn from(s: Segment) -> Self {
         LockedSegment::Original(Arc::new(RwLock::new(s)))
@@ -136,7 +130,7 @@ impl From<ProxySegment> for LockedSegment {
     }
 }
 
-#[derive(Default)]
+#[derive(Debug, Default)]
 pub struct SegmentHolder {
     appendable_segments: HashMap<SegmentId, LockedSegment>,
     non_appendable_segments: HashMap<SegmentId, LockedSegment>,
@@ -395,7 +389,7 @@ impl<'s> SegmentHolder {
     }
 
     /// Selects point ids, which is stored in this segment
-    fn segment_points(&self, ids: &[PointIdType], segment: &dyn SegmentEntry) -> Vec<PointIdType> {
+    fn segment_points(ids: &[PointIdType], segment: &dyn SegmentEntry) -> Vec<PointIdType> {
         ids.iter()
             .cloned()
             .filter(|id| segment.has_point(*id))
@@ -409,23 +403,52 @@ impl<'s> SegmentHolder {
         let mut processed_segments = 0;
         for (_id, segment) in self.iter() {
             let is_applied = f(&segment.get().read())?;
-            processed_segments += is_applied as usize;
+            processed_segments += usize::from(is_applied);
         }
         Ok(processed_segments)
     }
 
     pub fn apply_segments<F>(&self, mut f: F) -> OperationResult<usize>
     where
-        F: FnMut(&mut RwLockWriteGuard<dyn SegmentEntry + 'static>) -> OperationResult<bool>,
+        F: FnMut(
+            &mut RwLockUpgradableReadGuard<dyn SegmentEntry + 'static>,
+        ) -> OperationResult<bool>,
     {
         let _update_guard = self.update_tracker.update();
 
         let mut processed_segments = 0;
         for (_id, segment) in self.iter() {
-            let is_applied = f(&mut segment.get().write())?;
-            processed_segments += is_applied as usize;
+            let is_applied = f(&mut segment.get().upgradable_read())?;
+            processed_segments += usize::from(is_applied);
         }
         Ok(processed_segments)
+    }
+
+    pub fn apply_segments_batched<F>(&self, mut f: F) -> OperationResult<()>
+    where
+        F: FnMut(
+            &mut RwLockWriteGuard<dyn SegmentEntry + 'static>,
+            SegmentId,
+        ) -> OperationResult<bool>,
+    {
+        let _update_guard = self.update_tracker.update();
+
+        loop {
+            let mut did_apply = false;
+
+            // It is important to iterate over all segments for each batch
+            // to avoid blocking of a single segment with sequential updates
+            for (segment_id, segment) in self.iter() {
+                did_apply |= f(&mut segment.get().write(), *segment_id)?;
+            }
+
+            // No segment update => we're done
+            if !did_apply {
+                break;
+            }
+        }
+
+        Ok(())
     }
 
     /// Apply an operation `point_operation` to a set of points `ids`.
@@ -453,14 +476,14 @@ impl<'s> SegmentHolder {
             // Collect affected points first, we want to lock segment for writing as rare as possible
             let segment_arc = segment.get();
             let segment_lock = segment_arc.upgradable_read();
-            let segment_points = self.segment_points(ids, segment_lock.deref());
+            let segment_points = Self::segment_points(ids, segment_lock.deref());
             if !segment_points.is_empty() {
                 let mut write_segment = RwLockUpgradableReadGuard::upgrade(segment_lock);
                 let segment_data = segment_data(write_segment.deref());
                 for point_id in segment_points {
                     let is_applied =
                         point_operation(point_id, *idx, &mut write_segment, &segment_data)?;
-                    applied_points += is_applied as usize;
+                    applied_points += usize::from(is_applied);
                 }
             }
         }
@@ -469,10 +492,9 @@ impl<'s> SegmentHolder {
 
     /// Try to acquire read lock over the given segment with increasing wait time.
     /// Should prevent deadlock in case if multiple threads tries to lock segments sequentially.
-    fn aloha_lock_segment_read<'a>(
-        &'a self,
-        segment: &'a Arc<RwLock<dyn SegmentEntry>>,
-    ) -> RwLockReadGuard<dyn SegmentEntry> {
+    fn aloha_lock_segment_read(
+        segment: &'_ Arc<RwLock<dyn SegmentEntry>>,
+    ) -> RwLockReadGuard<'_, dyn SegmentEntry> {
         let mut interval = Duration::from_nanos(100);
         loop {
             if let Some(guard) = segment.try_read_for(interval) {
@@ -532,6 +554,7 @@ impl<'s> SegmentHolder {
     /// Moving is not performed in the following cases:
     /// - The segment containing the point is appendable.
     /// - The `update_nonappendable` function returns true for the segment.
+    ///
     /// Otherwise, the operation is applied to the containing segment in place.
     ///
     /// Rationale: non-appendable segments may contain immutable indexes that could be left in an
@@ -542,15 +565,17 @@ impl<'s> SegmentHolder {
     /// It's always safe to pass a closure that always returns false (i.e. `|_| false`).
     ///
     /// Returns set of point ids which were successfully (already) applied to segments.
-    pub fn apply_points_with_conditional_move<F, G>(
+    pub fn apply_points_with_conditional_move<F, G, H>(
         &self,
         op_num: SeqNumberType,
         ids: &[PointIdType],
         mut point_operation: F,
+        mut point_cow_operation: H,
         update_nonappendable: G,
     ) -> OperationResult<HashSet<PointIdType>>
     where
         F: FnMut(PointIdType, &mut RwLockWriteGuard<dyn SegmentEntry>) -> OperationResult<bool>,
+        for<'n, 'o, 'p> H: FnMut(PointIdType, &'n mut NamedVectors<'o>, &'p mut Payload),
         G: FnMut(&dyn SegmentEntry) -> bool,
     {
         let _update_guard = self.update_tracker.update();
@@ -577,8 +602,10 @@ impl<'s> SegmentHolder {
                     self.aloha_random_write(
                         &appendable_segments,
                         |_appendable_idx, appendable_write_segment| {
-                            let all_vectors = write_segment.all_vectors(point_id)?;
-                            let payload = write_segment.payload(point_id)?;
+                            let mut all_vectors = write_segment.all_vectors(point_id)?;
+                            let mut payload = write_segment.payload(point_id)?;
+
+                            point_cow_operation(point_id, &mut all_vectors, &mut payload);
 
                             appendable_write_segment.upsert_point(op_num, point_id, all_vectors)?;
                             appendable_write_segment
@@ -586,7 +613,7 @@ impl<'s> SegmentHolder {
 
                             write_segment.delete_point(op_num, point_id)?;
 
-                            point_operation(point_id, appendable_write_segment)
+                            Ok(true)
                         },
                     )?
                 };
@@ -597,7 +624,12 @@ impl<'s> SegmentHolder {
         Ok(applied_points)
     }
 
-    pub fn read_points<F>(&self, ids: &[PointIdType], mut f: F) -> OperationResult<usize>
+    pub fn read_points<F>(
+        &self,
+        ids: &[PointIdType],
+        is_stopped: &AtomicBool,
+        mut f: F,
+    ) -> OperationResult<usize>
     where
         F: FnMut(PointIdType, &RwLockReadGuard<dyn SegmentEntry>) -> OperationResult<bool>,
     {
@@ -618,9 +650,14 @@ impl<'s> SegmentHolder {
         for segment in segments {
             let segment_arc = segment.get();
             let read_segment = segment_arc.read();
-            for point in ids.iter().cloned().filter(|id| read_segment.has_point(*id)) {
+            let points = ids
+                .iter()
+                .cloned()
+                .check_stop(|| is_stopped.load(Ordering::Relaxed))
+                .filter(|id| read_segment.has_point(*id));
+            for point in points {
                 let is_ok = f(point, &read_segment)?;
-                read_points += is_ok as usize;
+                read_points += usize::from(is_ok);
             }
         }
         Ok(read_points)
@@ -647,7 +684,7 @@ impl<'s> SegmentHolder {
     ///
     /// If there are unsaved changes after flush - detects lowest unsaved change version.
     /// If all changes are saved - returns max version.
-    pub fn flush_all(&self, sync: bool) -> OperationResult<SeqNumberType> {
+    pub fn flush_all(&self, sync: bool, force: bool) -> OperationResult<SeqNumberType> {
         // Grab and keep to segment RwLock's until the end of this function
         let segments = self.segment_locks(self.segment_flush_ordering())?;
 
@@ -678,7 +715,7 @@ impl<'s> SegmentHolder {
         let mut segment_reads: Vec<_> = segments
             .iter()
             .rev()
-            .map(|segment| self.aloha_lock_segment_read(segment))
+            .map(|segment| Self::aloha_lock_segment_read(segment))
             .collect();
         segment_reads.reverse();
 
@@ -697,7 +734,7 @@ impl<'s> SegmentHolder {
         // Flush and release each segment
         for read_segment in segment_reads {
             let segment_version = read_segment.version();
-            let segment_persisted_version = read_segment.flush(sync)?;
+            let segment_persisted_version = read_segment.flush(sync, force)?;
 
             if segment_version > segment_persisted_version {
                 has_unsaved = true;
@@ -1151,7 +1188,7 @@ impl<'s> SegmentHolder {
     ///
     /// Deduplication works with plain segments only.
     pub fn deduplicate_points(&self) -> OperationResult<usize> {
-        let points_to_remove = self.find_duplicated_points()?;
+        let points_to_remove = self.find_duplicated_points();
 
         let mut removed_points = 0;
         for (segment_id, points) in points_to_remove {
@@ -1168,29 +1205,27 @@ impl<'s> SegmentHolder {
         Ok(removed_points)
     }
 
-    fn find_duplicated_points(&self) -> OperationResult<HashMap<SegmentId, Vec<PointIdType>>> {
+    fn find_duplicated_points(&self) -> HashMap<SegmentId, Vec<PointIdType>> {
         let segments = self
             .iter()
             .map(|(&segment_id, locked_segment)| (segment_id, locked_segment.get()))
             .collect::<Vec<_>>();
-        let locked_segments = BTreeMap::from_iter(
-            segments
-                .iter()
-                .map(|(segment_id, locked_segment)| (*segment_id, locked_segment.read())),
-        );
-        let mut iterators = BTreeMap::from_iter(
-            locked_segments
-                .iter()
-                .map(|(segment_id, locked_segment)| (*segment_id, locked_segment.iter_points())),
-        );
+        let locked_segments = segments
+            .iter()
+            .map(|(segment_id, locked_segment)| (*segment_id, locked_segment.read()))
+            .collect::<BTreeMap<_, _>>();
+        let mut iterators = locked_segments
+            .iter()
+            .map(|(segment_id, locked_segment)| (*segment_id, locked_segment.iter_points()))
+            .collect::<BTreeMap<_, _>>();
 
         // heap contains the current iterable point id from each segment
         let mut heap = iterators
             .iter_mut()
             .filter_map(|(&segment_id, iter)| {
                 iter.next().map(|point_id| DedupPoint {
-                    segment_id,
                     point_id,
+                    segment_id,
                 })
             })
             .collect::<BinaryHeap<_>>();
@@ -1244,17 +1279,20 @@ impl<'s> SegmentHolder {
             }
         }
 
-        Ok(points_to_remove)
+        points_to_remove
     }
 }
 
 #[cfg(test)]
 mod tests {
     use std::fs::read_dir;
+    use std::str::FromStr;
 
+    use segment::data_types::vectors::Vector;
+    use segment::json_path::JsonPath;
     use segment::segment_constructor::simple_segment_constructor::build_simple_segment;
-    use segment::types::Distance;
-    use serde_json::json;
+    use segment::types::{Distance, PayloadContainer};
+    use serde_json::{json, Value};
     use tempfile::Builder;
 
     use super::*;
@@ -1299,6 +1337,7 @@ mod tests {
 
         let op_num = 100;
         let mut processed_points: Vec<PointIdType> = vec![];
+        let mut processed_points2: Vec<PointIdType> = vec![];
         holder
             .apply_points_with_conditional_move(
                 op_num,
@@ -1308,16 +1347,21 @@ mod tests {
                     assert!(segment.has_point(point_id));
                     Ok(true)
                 },
+                |point_id, _, _| processed_points2.push(point_id),
                 |_| update_nonappendable,
             )
             .unwrap();
 
-        assert_eq!(4, processed_points.len());
+        assert_eq!(4, processed_points.len() + processed_points2.len());
 
         let locked_segment_1 = holder.get(sid1).unwrap().get();
         let read_segment_1 = locked_segment_1.read();
         let locked_segment_2 = holder.get(sid2).unwrap().get();
         let read_segment_2 = locked_segment_2.read();
+
+        for i in processed_points2.iter() {
+            assert!(read_segment_1.has_point(*i));
+        }
 
         assert!(read_segment_1.has_point(1.into()));
         assert!(read_segment_1.has_point(2.into()));
@@ -1408,6 +1452,7 @@ mod tests {
         // Update point 123, 456 and 789 in the non-appendable segment to move it to segment 2
         let op_num = 101;
         let mut processed_points: Vec<PointIdType> = vec![];
+        let mut processed_points2: Vec<PointIdType> = vec![];
         holder
             .apply_points_with_conditional_move(
                 op_num,
@@ -1417,15 +1462,20 @@ mod tests {
                     assert!(segment.has_point(point_id));
                     Ok(true)
                 },
+                |point_id, _, _| processed_points2.push(point_id),
                 |_| false,
             )
             .unwrap();
-        assert_eq!(3, processed_points.len());
+        assert_eq!(3, processed_points.len() + processed_points2.len());
 
         let locked_segment_1 = holder.get(sid1).unwrap().get();
         let read_segment_1 = locked_segment_1.read();
         let locked_segment_2 = holder.get(sid2).unwrap().get();
         let read_segment_2 = locked_segment_2.read();
+
+        for i in processed_points2.iter() {
+            assert!(read_segment_2.has_point(*i));
+        }
 
         // Point 123 and 456 should have moved from segment 1 into 2
         assert!(!read_segment_1.has_point(123.into()));
@@ -1434,6 +1484,79 @@ mod tests {
         assert!(read_segment_2.has_point(123.into()));
         assert!(read_segment_2.has_point(456.into()));
         assert!(read_segment_2.has_point(789.into()));
+    }
+
+    #[test]
+    fn test_cow_operation() {
+        const PAYLOAD_KEY: &str = "test-value";
+
+        let dir = Builder::new().prefix("segment_dir").tempdir().unwrap();
+
+        let segment1 = build_segment_1(dir.path());
+        let mut segment2 = build_segment_1(dir.path());
+
+        segment2
+            .upsert_point(
+                100,
+                123.into(),
+                segment::data_types::vectors::only_default_vector(&[0.0, 1.0, 2.0, 3.0]),
+            )
+            .unwrap();
+        let mut payload = Payload::default();
+        payload.0.insert(PAYLOAD_KEY.to_string(), 42.into());
+        segment2
+            .set_full_payload(100, 123.into(), &payload)
+            .unwrap();
+        segment2.appendable_flag = false;
+
+        let mut holder = SegmentHolder::default();
+        let sid1 = holder.add_new(segment1);
+        let sid2 = holder.add_new(segment2);
+
+        {
+            let locked_segment_1 = holder.get(sid1).unwrap().get();
+            let read_segment_1 = locked_segment_1.read();
+            assert!(!read_segment_1.has_point(123.into()));
+
+            let locked_segment_2 = holder.get(sid2).unwrap().get();
+            let read_segment_2 = locked_segment_2.read();
+            assert!(read_segment_2.has_point(123.into()));
+            let vector = read_segment_2.vector("", 123.into()).unwrap().unwrap();
+            assert_ne!(vector, Vector::Dense(vec![9.0; 4]));
+            assert_eq!(
+                read_segment_2
+                    .payload(123.into())
+                    .unwrap()
+                    .get_value(&JsonPath::from_str(PAYLOAD_KEY).unwrap())[0],
+                &Value::from(42)
+            );
+        }
+
+        holder
+            .apply_points_with_conditional_move(
+                1010,
+                &[123.into()],
+                |_, _| unreachable!(),
+                |_point_id, vectors, payload| {
+                    vectors.insert("".to_string(), Vector::Dense(vec![9.0; 4]));
+                    payload.0.insert(PAYLOAD_KEY.to_string(), 2.into());
+                },
+                |_| false,
+            )
+            .unwrap();
+
+        let locked_segment_1 = holder.get(sid1).unwrap().get();
+        let read_segment_1 = locked_segment_1.read();
+
+        assert!(read_segment_1.has_point(123.into()));
+
+        let new_vector = read_segment_1.vector("", 123.into()).unwrap().unwrap();
+        assert_eq!(new_vector, Vector::Dense(vec![9.0; 4]));
+        let new_payload_value = read_segment_1.payload(123.into()).unwrap();
+        assert_eq!(
+            new_payload_value.get_value(&JsonPath::from_str(PAYLOAD_KEY).unwrap())[0],
+            &Value::from(2)
+        );
     }
 
     #[test]

@@ -4,8 +4,10 @@ use common::types::ScoreType;
 use schemars::JsonSchema;
 use segment::common::utils::MaybeOneOrMany;
 use segment::data_types::order_by::OrderBy;
-use segment::json_path::{JsonPath, JsonPathInterface};
-use segment::types::{Filter, SearchParams, ShardKey, WithPayloadInterface, WithVector};
+use segment::json_path::JsonPath;
+use segment::types::{
+    Filter, IntPayloadType, PointIdType, SearchParams, ShardKey, WithPayloadInterface, WithVector,
+};
 use serde::{Deserialize, Serialize};
 use sparse::common::sparse_vector::SparseVector;
 use validator::Validate;
@@ -22,15 +24,53 @@ pub enum Vector {
     Dense(DenseVector),
     Sparse(sparse::common::sparse_vector::SparseVector),
     MultiDense(MultiDenseVector),
+    Document(Document),
 }
 
+fn vector_example() -> DenseVector {
+    vec![0.875, 0.140625, 0.8976]
+}
+
+fn multi_dense_vector_example() -> MultiDenseVector {
+    vec![
+        vec![0.875, 0.140625, 0.1102],
+        vec![0.758, 0.28126, 0.96871],
+        vec![0.621, 0.421878, 0.9375],
+    ]
+}
+
+fn named_vector_example() -> HashMap<String, Vector> {
+    let mut map = HashMap::new();
+    map.insert(
+        "image-embeddings".to_string(),
+        Vector::Dense(vec![0.873, 0.140625, 0.8976]),
+    );
+    map
+}
 /// Full vector data per point separator with single and multiple vector modes
 #[derive(Clone, Debug, PartialEq, Deserialize, Serialize, JsonSchema)]
 #[serde(untagged, rename_all = "snake_case")]
 pub enum VectorStruct {
+    #[schemars(example = "vector_example")]
     Single(DenseVector),
+    #[schemars(example = "multi_dense_vector_example")]
     MultiDense(MultiDenseVector),
+    #[schemars(example = "named_vector_example")]
     Named(HashMap<String, Vector>),
+    Document(Document),
+}
+
+/// WARN: Work-in-progress, unimplemented
+///
+/// Text document for embedding. Requires inference infrastructure, unimplemented.
+#[derive(Clone, Debug, PartialEq, Deserialize, Serialize, JsonSchema)]
+pub struct Document {
+    /// Text of the document
+    /// This field will be used as input for the embedding model
+    pub text: String,
+    /// Name of the model used to generate the vector
+    /// List of available models depends on a provider
+    pub model: Option<String>,
 }
 
 impl VectorStruct {
@@ -43,7 +83,9 @@ impl VectorStruct {
                 Vector::Dense(vector) => vector.is_empty(),
                 Vector::Sparse(vector) => vector.indices.is_empty(),
                 Vector::MultiDense(vector) => vector.is_empty(),
+                Vector::Document(_) => false,
             }),
+            VectorStruct::Document(_) => false,
         }
     }
 }
@@ -54,6 +96,7 @@ pub enum BatchVectorStruct {
     Single(Vec<DenseVector>),
     MultiDense(Vec<MultiDenseVector>),
     Named(HashMap<String, Vec<Vector>>),
+    Document(Vec<Document>),
 }
 
 #[derive(Debug, Deserialize, Serialize, Clone, JsonSchema, PartialEq)]
@@ -64,22 +107,34 @@ pub enum ShardKeySelector {
     // ToDo: select by pattern
 }
 
+fn version_example() -> segment::types::SeqNumberType {
+    3
+}
+
+fn score_example() -> common::types::ScoreType {
+    0.75
+}
+
 /// Search result
 #[derive(Serialize, JsonSchema, Clone, Debug)]
 pub struct ScoredPoint {
     /// Point id
-    pub id: segment::types::PointIdType,
+    pub id: PointIdType,
     /// Point version
+    #[schemars(example = "version_example")]
     pub version: segment::types::SeqNumberType,
     /// Points vector distance to the query vector
-    pub score: common::types::ScoreType,
+    #[schemars(example = "score_example")]
+    pub score: ScoreType,
     /// Payload - values assigned to the point
+    #[serde(skip_serializing_if = "Option::is_none")]
     pub payload: Option<segment::types::Payload>,
     /// Vector of the point
+    #[serde(skip_serializing_if = "Option::is_none")]
     pub vector: Option<VectorStruct>,
     /// Shard Key
     #[serde(skip_serializing_if = "Option::is_none")]
-    pub shard_key: Option<segment::types::ShardKey>,
+    pub shard_key: Option<ShardKey>,
     /// Order-by value
     #[serde(skip_serializing_if = "Option::is_none")]
     pub order_value: Option<segment::data_types::order_by::OrderValue>,
@@ -92,8 +147,10 @@ pub struct Record {
     /// Id of the point
     pub id: segment::types::PointIdType,
     /// Payload - values assigned to the point
+    #[serde(skip_serializing_if = "Option::is_none")]
     pub payload: Option<segment::types::Payload>,
     /// Vector of the point
+    #[serde(skip_serializing_if = "Option::is_none")]
     pub vector: Option<VectorStruct>,
     /// Shard Key
     #[serde(skip_serializing_if = "Option::is_none")]
@@ -135,12 +192,16 @@ pub enum OrderByInterface {
 }
 
 /// Fusion algorithm allows to combine results of multiple prefetches.
+///
 /// Available fusion algorithms:
-/// * `rrf` - Rank Reciprocal Fusion
+///
+/// * `rrf` - Reciprocal Rank Fusion
+/// * `dbsf` - Distribution-Based Score Fusion
 #[derive(Debug, Serialize, Deserialize, JsonSchema)]
 #[serde(rename_all = "snake_case")]
 pub enum Fusion {
     Rrf,
+    Dbsf,
 }
 
 #[derive(Debug, Serialize, Deserialize, JsonSchema)]
@@ -150,29 +211,30 @@ pub enum VectorInput {
     SparseVector(SparseVector),
     MultiDenseVector(MultiDenseVector),
     Id(segment::types::PointIdType),
+    Document(Document),
 }
 
 #[derive(Debug, Serialize, Deserialize, JsonSchema, Validate)]
 pub struct QueryRequestInternal {
     /// Sub-requests to perform first. If present, the query will be performed on the results of the prefetch(es).
-    #[validate]
+    #[validate(nested)]
     #[serde(default, with = "MaybeOneOrMany")]
     #[schemars(with = "MaybeOneOrMany<Prefetch>")]
     pub prefetch: Option<Vec<Prefetch>>,
 
     /// Query to perform. If missing without prefetches, returns points ordered by their IDs.
-    #[validate]
+    #[validate(nested)]
     pub query: Option<QueryInterface>,
 
     /// Define which vector name to use for querying. If missing, the default vector is used.
     pub using: Option<String>,
 
     /// Filter conditions - return only those points that satisfy the specified conditions.
-    #[validate]
+    #[validate(nested)]
     pub filter: Option<Filter>,
 
     /// Search params for when there is no prefetch
-    #[validate]
+    #[validate(nested)]
     pub params: Option<SearchParams>,
 
     /// Return points with scores better than this threshold.
@@ -199,7 +261,7 @@ pub struct QueryRequestInternal {
 
 #[derive(Debug, Serialize, Deserialize, JsonSchema, Validate)]
 pub struct QueryRequest {
-    #[validate]
+    #[validate(nested)]
     #[serde(flatten)]
     pub internal: QueryRequestInternal,
     pub shard_key: Option<ShardKeySelector>,
@@ -207,7 +269,7 @@ pub struct QueryRequest {
 
 #[derive(Debug, Serialize, Deserialize, JsonSchema, Validate)]
 pub struct QueryRequestBatch {
-    #[validate]
+    #[validate(nested)]
     pub searches: Vec<QueryRequest>,
 }
 
@@ -243,6 +305,9 @@ pub enum Query {
 
     /// Fuse the results of multiple prefetches.
     Fusion(FusionQuery),
+
+    /// Sample points from the collection, non-deterministically.
+    Sample(SampleQuery),
 }
 
 #[derive(Debug, Serialize, Deserialize, JsonSchema)]
@@ -281,27 +346,33 @@ pub struct FusionQuery {
     pub fusion: Fusion,
 }
 
+#[derive(Debug, Serialize, Deserialize, JsonSchema)]
+#[serde(rename_all = "snake_case")]
+pub struct SampleQuery {
+    pub sample: Sample,
+}
+
 #[derive(Debug, Serialize, Deserialize, JsonSchema, Validate)]
 pub struct Prefetch {
     /// Sub-requests to perform first. If present, the query will be performed on the results of the prefetches.
-    #[validate]
+    #[validate(nested)]
     #[serde(default, with = "MaybeOneOrMany")]
     #[schemars(with = "MaybeOneOrMany<Prefetch>")]
     pub prefetch: Option<Vec<Prefetch>>,
 
     /// Query to perform. If missing without prefetches, returns points ordered by their IDs.
-    #[validate]
+    #[validate(nested)]
     pub query: Option<QueryInterface>,
 
     /// Define which vector name to use for querying. If missing, the default vector is used.
     pub using: Option<String>,
 
     /// Filter conditions - return only those points that satisfy the specified conditions.
-    #[validate]
+    #[validate(nested)]
     pub filter: Option<Filter>,
 
     /// Search params for when there is no prefetch
-    #[validate]
+    #[validate(nested)]
     pub params: Option<SearchParams>,
 
     /// Return points with scores better than this threshold.
@@ -358,11 +429,11 @@ impl RecommendInput {
 #[derive(Debug, Serialize, Deserialize, JsonSchema, Validate)]
 pub struct DiscoverInput {
     /// Use this as the primary search objective
-    #[validate]
+    #[validate(nested)]
     pub target: VectorInput,
 
     /// Search space will be constrained by these pairs of vectors
-    #[validate]
+    #[validate(nested)]
     #[serde(with = "MaybeOneOrMany")]
     #[schemars(with = "MaybeOneOrMany<ContextPair>")]
     pub context: Option<Vec<ContextPair>>,
@@ -379,11 +450,11 @@ pub struct ContextInput(
 #[derive(Debug, Serialize, Deserialize, JsonSchema, Validate)]
 pub struct ContextPair {
     /// A positive vector
-    #[validate]
+    #[validate(nested)]
     pub positive: VectorInput,
 
     /// Repel from this vector
-    #[validate]
+    #[validate(nested)]
     pub negative: VectorInput,
 }
 
@@ -391,6 +462,12 @@ impl ContextPair {
     pub fn iter(&self) -> impl Iterator<Item = &VectorInput> {
         std::iter::once(&self.positive).chain(std::iter::once(&self.negative))
     }
+}
+
+#[derive(Debug, Serialize, Deserialize, JsonSchema)]
+#[serde(rename_all = "snake_case")]
+pub enum Sample {
+    Random,
 }
 
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize, JsonSchema)]
@@ -409,6 +486,7 @@ pub struct WithLookup {
     pub with_vectors: Option<WithVector>,
 }
 
+#[allow(clippy::unnecessary_wraps)] // Used as serde default
 const fn default_with_payload() -> Option<WithPayloadInterface> {
     Some(WithPayloadInterface::Bool(true))
 }
@@ -443,7 +521,6 @@ pub struct BaseGroupRequest {
     /// If the field contains more than 1 value, all values will be used for grouping.
     /// One point can be in multiple groups.
     #[schemars(length(min = 1))]
-    #[validate(custom = "JsonPath::validate_not_empty")]
     pub group_by: JsonPath,
 
     /// Maximum amount of points to return per group
@@ -461,15 +538,15 @@ pub struct BaseGroupRequest {
 #[derive(Debug, Deserialize, Serialize, JsonSchema, Validate, Clone)]
 pub struct SearchGroupsRequestInternal {
     /// Look for vectors closest to this
-    #[validate]
+    #[validate(nested)]
     pub vector: NamedVectorStruct,
 
     /// Look only for points which satisfies this conditions
-    #[validate]
+    #[validate(nested)]
     pub filter: Option<Filter>,
 
     /// Additional search params
-    #[validate]
+    #[validate(nested)]
     pub params: Option<SearchParams>,
 
     /// Select which payload to return with the response. Default is false.
@@ -486,7 +563,7 @@ pub struct SearchGroupsRequestInternal {
     pub score_threshold: Option<ScoreType>,
 
     #[serde(flatten)]
-    #[validate]
+    #[validate(nested)]
     pub group_request: BaseGroupRequest,
 }
 
@@ -497,13 +574,13 @@ pub struct SearchGroupsRequestInternal {
 #[serde(rename_all = "snake_case")]
 pub struct SearchRequestInternal {
     /// Look for vectors closest to this
-    #[validate]
+    #[validate(nested)]
     pub vector: NamedVectorStruct,
     /// Look only for points which satisfies this conditions
-    #[validate]
+    #[validate(nested)]
     pub filter: Option<Filter>,
     /// Additional search params
-    #[validate]
+    #[validate(nested)]
     pub params: Option<SearchParams>,
     /// Max number of result to return
     #[serde(alias = "top")]
@@ -523,4 +600,184 @@ pub struct SearchRequestInternal {
     /// Score of the returned result might be higher or smaller than the threshold depending on the
     /// Distance function used. E.g. for cosine similarity only higher scores will be returned.
     pub score_threshold: Option<ScoreType>,
+}
+
+#[derive(Validate, Serialize, Deserialize, JsonSchema, Debug, Clone, PartialEq)]
+pub struct QueryBaseGroupRequest {
+    /// Payload field to group by, must be a string or number field.
+    /// If the field contains more than 1 value, all values will be used for grouping.
+    /// One point can be in multiple groups.
+    #[schemars(length(min = 1))]
+    pub group_by: JsonPath,
+
+    /// Maximum amount of points to return per group. Default is 3.
+    #[validate(range(min = 1))]
+    pub group_size: Option<usize>,
+
+    /// Maximum amount of groups to return. Default is 10.
+    #[validate(range(min = 1))]
+    pub limit: Option<usize>,
+
+    /// Look for points in another collection using the group ids
+    pub with_lookup: Option<WithLookupInterface>,
+}
+
+#[derive(Debug, Serialize, Deserialize, JsonSchema, Validate)]
+pub struct QueryGroupsRequestInternal {
+    /// Sub-requests to perform first. If present, the query will be performed on the results of the prefetch(es).
+    #[validate(nested)]
+    #[serde(default, with = "MaybeOneOrMany")]
+    #[schemars(with = "MaybeOneOrMany<Prefetch>")]
+    pub prefetch: Option<Vec<Prefetch>>,
+
+    /// Query to perform. If missing without prefetches, returns points ordered by their IDs.
+    #[validate(nested)]
+    pub query: Option<QueryInterface>,
+
+    /// Define which vector name to use for querying. If missing, the default vector is used.
+    pub using: Option<String>,
+
+    /// Filter conditions - return only those points that satisfy the specified conditions.
+    #[validate(nested)]
+    pub filter: Option<Filter>,
+
+    /// Search params for when there is no prefetch
+    #[validate(nested)]
+    pub params: Option<SearchParams>,
+
+    /// Return points with scores better than this threshold.
+    pub score_threshold: Option<ScoreType>,
+
+    /// Options for specifying which vectors to include into the response. Default is false.
+    pub with_vector: Option<WithVector>,
+
+    /// Options for specifying which payload to include or not. Default is false.
+    pub with_payload: Option<WithPayloadInterface>,
+
+    /// The location to use for IDs lookup, if not specified - use the current collection and the 'using' vector
+    /// Note: the other collection vectors should have the same vector size as the 'using' vector in the current collection
+    #[serde(default)]
+    pub lookup_from: Option<LookupLocation>,
+
+    #[serde(flatten)]
+    #[validate(nested)]
+    pub group_request: QueryBaseGroupRequest,
+}
+
+#[derive(Debug, Serialize, Deserialize, JsonSchema, Validate)]
+pub struct QueryGroupsRequest {
+    #[validate(nested)]
+    #[serde(flatten)]
+    pub search_group_request: QueryGroupsRequestInternal,
+
+    pub shard_key: Option<ShardKeySelector>,
+}
+
+#[derive(Serialize, Deserialize, JsonSchema, Validate, Debug, PartialEq)]
+#[serde(rename_all = "snake_case")]
+pub struct SearchMatrixRequestInternal {
+    /// Look only for points which satisfies this conditions
+    #[validate(nested)]
+    pub filter: Option<Filter>,
+    /// How many points to select and search within.
+    #[validate(range(min = 2))]
+    pub sample: usize,
+    /// How many neighbours per sample to find
+    #[validate(range(min = 1))]
+    pub limit: usize,
+    /// Define which vector name to use for querying. If missing, the default vector is used.
+    pub using: Option<String>,
+}
+
+#[derive(Debug, Serialize, Deserialize, JsonSchema, Validate)]
+#[serde(rename_all = "snake_case")]
+pub struct SearchMatrixRequest {
+    #[serde(flatten)]
+    #[validate(nested)]
+    pub search_request: SearchMatrixRequestInternal,
+    /// Specify in which shards to look for the points, if not specified - look in all shards
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub shard_key: Option<ShardKeySelector>,
+}
+
+#[derive(Debug, Serialize, JsonSchema, PartialEq)]
+#[serde(rename_all = "snake_case")]
+pub struct SearchMatrixOffsetsResponse {
+    /// Row coordinates of the CRS matrix
+    pub offsets_row: Vec<u64>,
+    /// Column coordinates ids of the matrix
+    pub offsets_col: Vec<u64>,
+    /// Scores associate with coordinates
+    pub scores: Vec<ScoreType>,
+    /// Ids of the points in order
+    pub ids: Vec<PointIdType>,
+}
+
+#[derive(Debug, Serialize, JsonSchema, PartialEq)]
+#[serde(rename_all = "snake_case")]
+/// Pair of points (a, b) with score
+pub struct SearchMatrixPair {
+    pub a: PointIdType,
+    pub b: PointIdType,
+    pub score: ScoreType,
+}
+
+impl SearchMatrixPair {
+    pub fn new(a: impl Into<PointIdType>, b: impl Into<PointIdType>, score: ScoreType) -> Self {
+        Self {
+            a: a.into(),
+            b: b.into(),
+            score,
+        }
+    }
+}
+
+#[derive(Debug, Serialize, JsonSchema, PartialEq)]
+#[serde(rename_all = "snake_case")]
+pub struct SearchMatrixPairsResponse {
+    /// List of pairs of points with scores
+    pub pairs: Vec<SearchMatrixPair>,
+}
+
+#[derive(Debug, JsonSchema, Serialize, Deserialize, Validate)]
+pub struct FacetRequestInternal {
+    /// Payload key to use for faceting.
+    pub key: JsonPath,
+
+    /// Max number of hits to return. Default is 10.
+    #[validate(range(min = 1))]
+    pub limit: Option<usize>,
+
+    /// Filter conditions - only consider points that satisfy these conditions.
+    pub filter: Option<Filter>,
+
+    /// Whether to do a more expensive exact count for each of the values in the facet. Default is false.
+    pub exact: Option<bool>,
+}
+
+#[derive(Debug, Serialize, Deserialize, JsonSchema, Validate)]
+pub struct FacetRequest {
+    #[validate(nested)]
+    #[serde(flatten)]
+    pub facet_request: FacetRequestInternal,
+
+    pub shard_key: Option<ShardKeySelector>,
+}
+
+#[derive(Debug, Serialize, JsonSchema)]
+#[serde(untagged)]
+pub enum FacetValue {
+    String(String),
+    Integer(IntPayloadType),
+}
+
+#[derive(Debug, Serialize, JsonSchema)]
+pub struct FacetValueHit {
+    pub value: FacetValue,
+    pub count: usize,
+}
+
+#[derive(Debug, Serialize, JsonSchema)]
+pub struct FacetResponse {
+    pub hits: Vec<FacetValueHit>,
 }

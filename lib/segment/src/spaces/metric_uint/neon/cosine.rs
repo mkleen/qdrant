@@ -54,16 +54,21 @@ pub unsafe fn neon_cosine_similarity_bytes(v1: &[u8], v2: &[u8]) -> f32 {
             let v2 = *ptr2;
             ptr1 = ptr1.add(1);
             ptr2 = ptr2.add(1);
-            remainder_dot_product += (v1 as i32) * (v2 as i32);
-            remainder_norm1 += (v1 as i32) * (v1 as i32);
-            remainder_norm2 += (v2 as i32) * (v2 as i32);
+            remainder_dot_product += i32::from(v1) * i32::from(v2);
+            remainder_norm1 += i32::from(v1) * i32::from(v1);
+            remainder_norm2 += i32::from(v2) * i32::from(v2);
         }
         dot_product += remainder_dot_product as f32;
         norm1 += remainder_norm1 as f32;
         norm2 += remainder_norm2 as f32;
     }
 
-    dot_product / ((norm1 * norm2).sqrt())
+    let denominator = norm1 * norm2;
+    if denominator == 0.0 {
+        return 0.0;
+    }
+
+    dot_product / denominator.sqrt()
 }
 
 #[cfg(test)]
@@ -96,6 +101,25 @@ mod tests {
             let dot_simd = unsafe { neon_cosine_similarity_bytes(&v1, &v2) };
             let dot = cosine_similarity_bytes(&v1, &v2);
             assert_eq!(dot_simd, dot);
+        } else {
+            println!("neon test skipped");
+        }
+    }
+
+    #[test]
+    fn test_zero_neon() {
+        if is_aarch64_feature_detected!("neon") {
+            let v1: Vec<u8> = vec![0, 0, 0, 0, 0, 0, 0, 0];
+            let v2: Vec<u8> = vec![255, 255, 0, 254, 253, 252, 251, 250];
+
+            let dot_simd = unsafe { neon_cosine_similarity_bytes(&v1, &v2) };
+            assert_eq!(dot_simd, 0.0);
+
+            let dot_simd = unsafe { neon_cosine_similarity_bytes(&v2, &v1) };
+            assert_eq!(dot_simd, 0.0);
+
+            let dot_simd = unsafe { neon_cosine_similarity_bytes(&v1, &v1) };
+            assert_eq!(dot_simd, 0.0);
         } else {
             println!("neon test skipped");
         }

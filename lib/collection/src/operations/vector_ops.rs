@@ -10,12 +10,12 @@ use validator::{Validate, ValidationError, ValidationErrors};
 
 use super::point_ops::PointIdsList;
 use super::{point_to_shards, split_iter_by_shard, OperationToShard, SplitByShard};
-use crate::hash_ring::HashRing;
+use crate::hash_ring::HashRingRouter;
 
 #[derive(Debug, Deserialize, Serialize, JsonSchema, Validate, Clone)]
 pub struct UpdateVectors {
     /// Points with named vectors
-    #[validate]
+    #[validate(nested)]
     #[validate(length(min = 1, message = "must specify points to update"))]
     pub points: Vec<PointVectors>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
@@ -63,7 +63,7 @@ pub struct DeleteVectors {
 #[derive(Clone, Debug, PartialEq, Deserialize, Serialize, Validate)]
 pub struct UpdateVectorsOp {
     /// Points with named vectors
-    #[validate]
+    #[validate(nested)]
     #[validate(length(min = 1, message = "must specify points to update"))]
     pub points: Vec<PointVectors>,
 }
@@ -101,13 +101,13 @@ impl Validate for VectorOperations {
 }
 
 impl SplitByShard for Vec<PointVectors> {
-    fn split_by_shard(self, ring: &HashRing) -> OperationToShard<Self> {
+    fn split_by_shard(self, ring: &HashRingRouter) -> OperationToShard<Self> {
         split_iter_by_shard(self, |point| point.id, ring)
     }
 }
 
 impl SplitByShard for VectorOperations {
-    fn split_by_shard(self, ring: &HashRing) -> OperationToShard<Self> {
+    fn split_by_shard(self, ring: &HashRingRouter) -> OperationToShard<Self> {
         match self {
             VectorOperations::UpdateVectors(update_vectors) => {
                 let shard_points = update_vectors

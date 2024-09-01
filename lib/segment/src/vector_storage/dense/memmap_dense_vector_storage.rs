@@ -9,7 +9,7 @@ use bitvec::prelude::BitSlice;
 use common::types::PointOffsetType;
 use memory::mmap_ops;
 
-use crate::common::operation_error::{check_process_stopped, OperationResult};
+use crate::common::operation_error::{check_process_stopped, OperationError, OperationResult};
 use crate::common::Flusher;
 use crate::data_types::named_vectors::CowVector;
 use crate::data_types::primitive::PrimitiveVectorElement;
@@ -28,6 +28,7 @@ const DELETED_PATH: &str = "deleted.dat";
 /// but possible to mark some vectors as removed
 ///
 /// Mem-mapped storage can only be constructed from another storage
+#[derive(Debug)]
 pub struct MemmapDenseVectorStorage<T: PrimitiveVectorElement> {
     vectors_path: PathBuf,
     deleted_path: PathBuf,
@@ -172,10 +173,9 @@ impl<T: PrimitiveVectorElement> VectorStorage for MemmapDenseVectorStorage<T> {
         panic!("Can't directly update vector in mmap storage")
     }
 
-    fn update_from(
+    fn update_from<'a>(
         &mut self,
-        other: &VectorStorageEnum,
-        other_ids: &mut impl Iterator<Item = PointOffsetType>,
+        other_ids: &'a mut impl Iterator<Item = (CowVector<'a>, bool)>,
         stopped: &AtomicBool,
     ) -> OperationResult<Range<PointOffsetType>> {
         let dim = self.vector_dim();
@@ -191,17 +191,16 @@ impl<T: PrimitiveVectorElement> VectorStorage for MemmapDenseVectorStorage<T> {
         // Extend vectors file, write other vectors into it
         let mut vectors_file = open_append(&self.vectors_path)?;
         let mut deleted_ids = vec![];
-        for id in other_ids {
+        for (offset, (other_vector, other_deleted)) in other_ids.enumerate() {
             check_process_stopped(stopped)?;
-            let other_vector = other.get_vector(id);
             let vector = T::slice_from_float_cow(Cow::try_from(other_vector)?);
             let raw_bites = mmap_ops::transmute_to_u8_slice(vector.as_ref());
             vectors_file.write_all(raw_bites)?;
             end_index += 1;
 
             // Remember deleted IDs so we can propagate deletions later
-            if other.is_deleted_vector(id) {
-                deleted_ids.push((start_index + id) as PointOffsetType);
+            if other_deleted {
+                deleted_ids.push(start_index as PointOffsetType + offset as PointOffsetType);
             }
         }
         vectors_file.flush()?;
@@ -230,7 +229,10 @@ impl<T: PrimitiveVectorElement> VectorStorage for MemmapDenseVectorStorage<T> {
 
     fn flusher(&self) -> Flusher {
         match &self.mmap_store {
-            Some(mmap_store) => mmap_store.flusher(),
+            Some(mmap_store) => {
+                let mmap_flusher = mmap_store.flusher();
+                Box::new(move || mmap_flusher().map_err(OperationError::from))
+            }
             None => Box::new(|| Ok(())),
         }
     }
@@ -332,9 +334,13 @@ mod tests {
                     .insert_vector(2, points[2].as_slice().into())
                     .unwrap();
             }
-            storage
-                .update_from(&storage2, &mut Box::new(0..3), &Default::default())
-                .unwrap();
+            let mut iter = (0..3).map(|i| {
+                let i = i as PointOffsetType;
+                let vector = storage2.get_vector(i);
+                let deleted = storage2.is_deleted_vector(i);
+                (vector, deleted)
+            });
+            storage.update_from(&mut iter, &Default::default()).unwrap();
         }
 
         assert_eq!(storage.total_vector_count(), 3);
@@ -365,9 +371,13 @@ mod tests {
                     .insert_vector(4, points[4].as_slice().into())
                     .unwrap();
             }
-            storage
-                .update_from(&storage2, &mut Box::new(0..2), &Default::default())
-                .unwrap();
+            let mut iter = (0..2).map(|i| {
+                let i = i as PointOffsetType;
+                let vector = storage2.get_vector(i);
+                let deleted = storage2.is_deleted_vector(i);
+                (vector, deleted)
+            });
+            storage.update_from(&mut iter, &Default::default()).unwrap();
         }
 
         assert_eq!(storage.total_vector_count(), 5);
@@ -428,13 +438,13 @@ mod tests {
                         .unwrap();
                 });
             }
-            storage
-                .update_from(
-                    &storage2,
-                    &mut Box::new(0..points.len() as u32),
-                    &Default::default(),
-                )
-                .unwrap();
+            let mut iter = (0..points.len()).map(|i| {
+                let i = i as PointOffsetType;
+                let vector = storage2.get_vector(i);
+                let deleted = storage2.is_deleted_vector(i);
+                (vector, deleted)
+            });
+            storage.update_from(&mut iter, &Default::default()).unwrap();
         }
 
         assert_eq!(storage.total_vector_count(), 5);
@@ -550,13 +560,13 @@ mod tests {
                     }
                 });
             }
-            storage
-                .update_from(
-                    &storage2,
-                    &mut Box::new(0..points.len() as u32),
-                    &Default::default(),
-                )
-                .unwrap();
+            let mut iter = (0..points.len()).map(|i| {
+                let i = i as PointOffsetType;
+                let vector = storage2.get_vector(i);
+                let deleted = storage2.is_deleted_vector(i);
+                (vector, deleted)
+            });
+            storage.update_from(&mut iter, &Default::default()).unwrap();
         }
 
         assert_eq!(
@@ -623,13 +633,13 @@ mod tests {
                         .unwrap();
                 }
             }
-            storage
-                .update_from(
-                    &storage2,
-                    &mut Box::new(0..points.len() as PointOffsetType),
-                    &Default::default(),
-                )
-                .unwrap();
+            let mut iter = (0..points.len()).map(|i| {
+                let i = i as PointOffsetType;
+                let vector = storage2.get_vector(i);
+                let deleted = storage2.is_deleted_vector(i);
+                (vector, deleted)
+            });
+            storage.update_from(&mut iter, &Default::default()).unwrap();
         }
 
         let vector = vec![-1.0, -1.0, -1.0, -1.0];
@@ -707,13 +717,13 @@ mod tests {
                         .unwrap();
                 }
             }
-            storage
-                .update_from(
-                    &storage2,
-                    &mut Box::new(0..points.len() as PointOffsetType),
-                    &Default::default(),
-                )
-                .unwrap();
+            let mut iter = (0..points.len()).map(|i| {
+                let i = i as PointOffsetType;
+                let vector = storage2.get_vector(i);
+                let deleted = storage2.is_deleted_vector(i);
+                (vector, deleted)
+            });
+            storage.update_from(&mut iter, &Default::default()).unwrap();
         }
 
         let config: QuantizationConfig = ScalarQuantizationConfig {

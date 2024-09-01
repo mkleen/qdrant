@@ -5,7 +5,8 @@ use segment::json_path::JsonPath;
 use segment::types::{PointIdType, ScoredPoint};
 
 use crate::lookup::WithLookup;
-use crate::operations::types::{CoreSearchRequest, PointGroup};
+use crate::operations::types::PointGroup;
+use crate::operations::universal_query::shard_query::ShardQueryRequest;
 
 #[derive(PartialEq, Debug)]
 pub(super) enum AggregatorError {
@@ -44,9 +45,9 @@ impl From<Group> for PointGroup {
 }
 
 #[derive(Clone)]
-pub struct CoreGroupRequest {
-    /// Core request to use
-    pub source: CoreSearchRequest,
+pub struct QueryGroupRequest {
+    /// Query request to use
+    pub source: ShardQueryRequest,
 
     /// Path to the field to group by
     pub group_by: JsonPath,
@@ -55,7 +56,7 @@ pub struct CoreGroupRequest {
     pub group_size: usize,
 
     /// Limit of groups to return
-    pub limit: usize,
+    pub groups: usize,
 
     /// Options for specifying how to use the group id to lookup points in another collection
     pub with_lookup: Option<WithLookup>,

@@ -26,12 +26,23 @@ pub enum ClusterOperations {
     DropShardingKey(DropShardingKeyOperation),
     /// Restart transfer
     RestartTransfer(RestartTransferOperation),
+
     /// Start resharding
-    // TODO(resharding): expose when releasing resharding
     #[schemars(skip)]
     StartResharding(StartReshardingOperation),
+    /// Finish migrating points on specified shard, mark shard as `Active`
+    #[schemars(skip)]
+    FinishMigratingPoints(FinishMigratingPointsOperation),
+    /// Commit read hashring
+    #[schemars(skip)]
+    CommitReadHashRing(CommitReadHashRingOperation),
+    /// Commit write hashring
+    #[schemars(skip)]
+    CommitWriteHashRing(CommitWriteHashRingOperation),
+    /// Finish resharding
+    #[schemars(skip)]
+    FinishResharding(FinishReshardingOperation),
     /// Abort resharding
-    // TODO(resharding): expose when releasing resharding
     #[schemars(skip)]
     AbortResharding(AbortReshardingOperation),
 }
@@ -70,21 +81,6 @@ pub struct CreateShardingKey {
     pub placement: Option<Vec<PeerId>>,
 }
 
-impl CreateShardingKey {
-    /// Check if the operation has default parameters.
-    pub fn has_default_params(&self) -> bool {
-        matches!(
-            self,
-            CreateShardingKey {
-                shard_key: _,
-                shards_number: None,
-                replication_factor: None,
-                placement: None,
-            }
-        )
-    }
-}
-
 #[derive(Debug, Deserialize, Serialize, JsonSchema, Validate, Clone)]
 #[serde(rename_all = "snake_case")]
 pub struct DropShardingKey {
@@ -114,6 +110,10 @@ impl Validate for ClusterOperations {
             ClusterOperations::DropShardingKey(op) => op.validate(),
             ClusterOperations::RestartTransfer(op) => op.validate(),
             ClusterOperations::StartResharding(op) => op.validate(),
+            ClusterOperations::FinishMigratingPoints(op) => op.validate(),
+            ClusterOperations::CommitReadHashRing(op) => op.validate(),
+            ClusterOperations::CommitWriteHashRing(op) => op.validate(),
+            ClusterOperations::FinishResharding(op) => op.validate(),
             ClusterOperations::AbortResharding(op) => op.validate(),
         }
     }
@@ -122,43 +122,67 @@ impl Validate for ClusterOperations {
 #[derive(Debug, Deserialize, Serialize, JsonSchema, Validate, Clone)]
 #[serde(rename_all = "snake_case")]
 pub struct MoveShardOperation {
-    #[validate]
+    #[validate(nested)]
     pub move_shard: MoveShard,
 }
 
 #[derive(Debug, Deserialize, Serialize, JsonSchema, Validate, Clone)]
 #[serde(rename_all = "snake_case")]
 pub struct ReplicateShardOperation {
-    #[validate]
+    #[validate(nested)]
     pub replicate_shard: ReplicateShard,
 }
 
 #[derive(Debug, Deserialize, Serialize, JsonSchema, Validate, Clone)]
 #[serde(rename_all = "snake_case")]
 pub struct DropReplicaOperation {
-    #[validate]
+    #[validate(nested)]
     pub drop_replica: Replica,
 }
 
 #[derive(Debug, Deserialize, Serialize, JsonSchema, Validate, Clone)]
 #[serde(rename_all = "snake_case")]
 pub struct AbortTransferOperation {
-    #[validate]
+    #[validate(nested)]
     pub abort_transfer: AbortShardTransfer,
 }
 
 #[derive(Clone, Debug, Deserialize, Serialize, JsonSchema, Validate)]
-#[serde(rename_all = "snake_case")]
 pub struct StartReshardingOperation {
-    #[validate]
+    #[validate(nested)]
     pub start_resharding: StartResharding,
+}
+
+#[derive(Copy, Clone, Debug, Deserialize, Serialize, JsonSchema, Validate)]
+pub struct FinishMigratingPointsOperation {
+    #[validate(nested)]
+    pub finish_migrating_points: FinishMigratingPoints,
 }
 
 #[derive(Clone, Debug, Deserialize, Serialize, JsonSchema, Validate)]
 #[serde(rename_all = "snake_case")]
 pub struct AbortReshardingOperation {
-    #[validate]
+    #[validate(nested)]
     pub abort_resharding: AbortResharding,
+}
+
+#[derive(Clone, Debug, Deserialize, Serialize, JsonSchema, Validate)]
+#[serde(rename_all = "snake_case")]
+pub struct CommitReadHashRingOperation {
+    #[validate(nested)]
+    pub commit_read_hash_ring: CommitReadHashRing,
+}
+
+#[derive(Copy, Clone, Debug, Deserialize, Serialize, JsonSchema, Validate)]
+pub struct CommitWriteHashRingOperation {
+    #[validate(nested)]
+    pub commit_write_hash_ring: CommitWriteHashRing,
+}
+
+#[derive(Copy, Clone, Debug, Deserialize, Serialize, JsonSchema, Validate)]
+pub struct FinishReshardingOperation {
+    #[validate(nested)]
+    pub finish_resharding: FinishResharding,
 }
 
 #[derive(Debug, Deserialize, Serialize, JsonSchema, Clone)]
@@ -224,12 +248,36 @@ pub struct AbortShardTransfer {
 }
 
 #[derive(Clone, Debug, Deserialize, Serialize, JsonSchema, Validate)]
-#[serde(rename_all = "snake_case")]
 pub struct StartResharding {
+    pub direction: ReshardingDirection,
     pub peer_id: Option<PeerId>,
     pub shard_key: Option<ShardKey>,
 }
 
-#[derive(Clone, Debug, Deserialize, Serialize, JsonSchema, Validate)]
+/// Resharding direction, scale up or down in number of shards
+#[derive(Copy, Clone, Debug, Eq, PartialEq, Hash, Deserialize, Serialize, JsonSchema)]
 #[serde(rename_all = "snake_case")]
+pub enum ReshardingDirection {
+    /// Scale up, add a new shard
+    Up,
+    /// Scale down, remove a shard
+    Down,
+}
+
+#[derive(Copy, Clone, Debug, Deserialize, Serialize, JsonSchema, Validate)]
+pub struct FinishMigratingPoints {
+    pub shard_id: Option<ShardId>,
+    pub peer_id: Option<PeerId>,
+}
+
+#[derive(Copy, Clone, Debug, Deserialize, Serialize, JsonSchema, Validate)]
+pub struct CommitReadHashRing {}
+
+#[derive(Copy, Clone, Debug, Deserialize, Serialize, JsonSchema, Validate)]
+pub struct CommitWriteHashRing {}
+
+#[derive(Copy, Clone, Debug, Deserialize, Serialize, JsonSchema, Validate)]
+pub struct FinishResharding {}
+
+#[derive(Copy, Clone, Debug, Deserialize, Serialize, JsonSchema, Validate)]
 pub struct AbortResharding {}

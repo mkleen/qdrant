@@ -2,24 +2,44 @@
 
 set -ex
 
-QDRANT_HOST="localhost:6333"
+export QDRANT_HOST="localhost:6333"
 
 SCRIPT_DIR=$(realpath "$(dirname "$0")")
 
 # Ensure current path is project root
 cd "$(dirname "$0")/../../"
 
-# Delete previous storage
-rm -rf ./storage
+USE_DOCKER=${USE_DOCKER:-"1"}
 
-# Run qdrant
-cargo build
-./target/debug/qdrant & PID=$!
+QDRANT_VERSION=${QDRANT_VERSION:-""}
+
+# Ask for version if not provided
+
+if [ -z "$QDRANT_VERSION" ]; then
+  read -p "Enter the version of qdrant that was used to generate this compatibility data (example - v1.7.4): " QDRANT_VERSION
+fi
+
+if [ $USE_DOCKER -eq 0 ]; then
+  # Delete previous storage
+  rm -rf ./storage
+
+  # Run qdrant
+  cargo build
+  ./target/debug/qdrant & PID=$!
+else
+  docker run --rm -it -v $(pwd)/storage:/qdrant/storage debian:12-slim bash -c "rm -rf /qdrant/storage/*"
+  docker run -d --rm --network=host -v $(pwd)/storage:/qdrant/storage --name=gen-storage-compatibility  qdrant/qdrant:$QDRANT_VERSION
+fi
 
 function teardown()
 {
   echo "server is going down"
-  kill -9 $PID || true
+
+  if [ $USE_DOCKER -eq 0 ]; then
+    kill $PID || true
+  else
+    docker kill gen-storage-compatibility || true
+  fi
   echo "END"
 }
 
@@ -37,12 +57,7 @@ until curl --output /dev/null --silent --get --fail http://$QDRANT_HOST/collecti
 done
 
 # Run python script to populate db
-IMAGE_NAME=$(docker buildx build --load -q "${SCRIPT_DIR}/populate_db")
-# For osx users, add the replace `--network="host"` with `-e QDRANT_HOST=host.docker.internal:6333`
-docker run --rm \
-            --network="host" \
-            --add-host host.docker.internal:host-gateway \
-            $IMAGE_NAME sh -c "python populate_db.py"
+tests/storage-compat/populate_db.py
 
 # Wait for indexing to finish
 sleep 1
@@ -66,15 +81,14 @@ gzip "${SCRIPT_DIR}/full-snapshot.snapshot"
 
 rm "${SCRIPT_DIR}/storage.tar.bz2" || true
 
+sudo chown -R $(whoami) ./storage
+
 # Save current storage folder
 tar -cjvf "${SCRIPT_DIR}/storage.tar.bz2" ./storage
 
-# Ask for version
-read -p "Enter the version of qdrant that was used to generate this compatibility data (example - v1.7.4): " version
-
 cd "${SCRIPT_DIR}"
-tar -cvf "./compatibility-${version}.tar" "storage.tar.bz2" "full-snapshot.snapshot.gz"
+tar -cvf "./compatibility-${QDRANT_VERSION}.tar" "storage.tar.bz2" "full-snapshot.snapshot.gz"
 cd -
 
-echo "Compatibility data saved to ${SCRIPT_DIR}/compatibility-${version}.tar"
+echo "Compatibility data saved to ${SCRIPT_DIR}/compatibility-${QDRANT_VERSION}.tar"
 echo "Upload it to "qdrant-backward-compatibility" gcs bucket (requires access rights)"

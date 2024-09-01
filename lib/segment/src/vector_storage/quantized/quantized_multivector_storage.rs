@@ -5,10 +5,10 @@ use std::path::{Path, PathBuf};
 
 use common::types::{PointOffsetType, ScoreType};
 use memmap2::MmapMut;
+use memory::mmap_type::MmapSlice;
 use quantization::{EncodedVectors, VectorParameters};
 use serde::{Deserialize, Serialize};
 
-use crate::common::mmap_type::MmapSlice;
 use crate::common::operation_error::OperationResult;
 use crate::data_types::vectors::{TypedMultiDenseVectorRef, VectorElementType};
 use crate::types::{MultiVectorComparator, MultiVectorConfig};
@@ -49,6 +49,7 @@ impl MultivectorOffsetsStorage for Vec<MultivectorOffset> {
     }
 }
 
+#[derive(Debug)]
 pub struct MultivectorOffsetsStorageMmap {
     path: PathBuf,
     offsets: MmapSlice<MultivectorOffset>,
@@ -83,6 +84,7 @@ impl MultivectorOffsetsStorage for MultivectorOffsetsStorageMmap {
     }
 }
 
+#[derive(Debug)]
 pub struct QuantizedMultivectorStorage<TEncodedQuery, QuantizedStorage, TMultivectorOffsetsStorage>
 where
     TEncodedQuery: Sized,

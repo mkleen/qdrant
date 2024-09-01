@@ -1,43 +1,45 @@
+use std::collections::HashSet;
+use std::fmt;
 use std::hash::Hash;
-use std::{any, fmt};
 
 use itertools::Itertools as _;
 use segment::index::field_index::CardinalityEstimation;
-use segment::types::{PointIdType, ReshardingCondition};
+use segment::types::{CustomIdCheckerCondition, PointIdType};
 use smallvec::SmallVec;
 
+use crate::operations::cluster_ops::ReshardingDirection;
 use crate::shards::shard::ShardId;
 
-const HASH_RING_SHARD_SCALE: u32 = 100;
+pub const HASH_RING_SHARD_SCALE: u32 = 100;
 
 #[derive(Clone, PartialEq, Debug)]
-pub enum HashRing<T = ShardId> {
+pub enum HashRingRouter<T = ShardId> {
     /// Single hashring
-    Single(Inner<T>),
+    Single(HashRing<T>),
 
     /// Two hashrings when transitioning during resharding
     /// Depending on the current resharding state, points may be in either or both shards.
-    Resharding { old: Inner<T>, new: Inner<T> },
+    Resharding { old: HashRing<T>, new: HashRing<T> },
 }
 
-impl<T: Hash + Copy + PartialEq> HashRing<T> {
+impl<T: Hash + Copy + PartialEq> HashRingRouter<T> {
     /// Create a new single hashring.
     ///
     /// The hashring is created with a fair distribution of points and `HASH_RING_SHARD_SCALE` scale.
     pub fn single() -> Self {
-        Self::Single(Inner::fair(HASH_RING_SHARD_SCALE))
+        Self::Single(HashRing::fair(HASH_RING_SHARD_SCALE))
     }
 
     /// Create a new resharding hashring, with resharding shard already added into `new` hashring.
     ///
     /// The hashring is created with a fair distribution of points and `HASH_RING_SHARD_SCALE` scale.
-    pub fn resharding(shard: T) -> Self {
+    pub fn resharding(shard: T, direction: ReshardingDirection) -> Self {
         let mut ring = Self::Resharding {
-            old: Inner::fair(HASH_RING_SHARD_SCALE),
-            new: Inner::fair(HASH_RING_SHARD_SCALE),
+            old: HashRing::fair(HASH_RING_SHARD_SCALE),
+            new: HashRing::fair(HASH_RING_SHARD_SCALE),
         };
 
-        ring.add_resharding(shard);
+        ring.start_resharding(shard, direction);
 
         ring
     }
@@ -65,7 +67,7 @@ impl<T: Hash + Copy + PartialEq> HashRing<T> {
         }
     }
 
-    pub fn add_resharding(&mut self, shard: T) {
+    pub fn start_resharding(&mut self, shard: T, direction: ReshardingDirection) {
         if let Self::Single(ring) = self {
             let (old, new) = (ring.clone(), ring.clone());
             *self = Self::Resharding { old, new };
@@ -75,7 +77,15 @@ impl<T: Hash + Copy + PartialEq> HashRing<T> {
             unreachable!();
         };
 
-        new.add(shard);
+        match direction {
+            ReshardingDirection::Up => {
+                new.add(shard);
+            }
+            ReshardingDirection::Down => {
+                assert!(new.len() > 1, "cannot remove last shard from hash ring");
+                new.remove(&shard);
+            }
+        }
     }
 
     pub fn commit_resharding(&mut self) -> bool {
@@ -88,27 +98,33 @@ impl<T: Hash + Copy + PartialEq> HashRing<T> {
         true
     }
 
-    pub fn remove_resharding(&mut self, shard: T) -> bool
+    pub fn end_resharding(&mut self, shard: T, direction: ReshardingDirection) -> bool
     where
         T: fmt::Display,
     {
         let Self::Resharding { old, new } = self else {
-            log::warn!("removing resharding shard, but hashring is not in resharding mode");
+            log::warn!("ending resharding hashring, but it is not in resharding mode");
             return false;
         };
 
         let mut old = old.clone();
         let mut new = new.clone();
 
-        let removed_from_old = old.remove(&shard);
-        let removed_from_new = new.remove(&shard);
+        let (updated_old, updated_new) = match direction {
+            ReshardingDirection::Up => (old.remove(&shard), new.remove(&shard)),
+            ReshardingDirection::Down => {
+                old.add(shard);
+                new.add(shard);
+                (false, true)
+            }
+        };
 
-        let removed_resharding = match (removed_from_old, removed_from_new) {
+        let updated = match (updated_old, updated_new) {
             (false, true) => true,
 
             (true, true) => {
                 log::error!(
-                    "removing resharding shard, \
+                    "ending resharding shard, \
                      but {shard} is not resharding shard"
                 );
 
@@ -117,7 +133,7 @@ impl<T: Hash + Copy + PartialEq> HashRing<T> {
 
             (true, false) => {
                 log::error!(
-                    "removing resharding shard, \
+                    "ending resharding shard, \
                      but shard {shard} only exists in the old hashring"
                 );
 
@@ -126,7 +142,7 @@ impl<T: Hash + Copy + PartialEq> HashRing<T> {
 
             (false, false) => {
                 log::warn!(
-                    "removing resharding shard, \
+                    "ending resharding shard, \
                      but shard {shard} does not exist in the hashring"
                 );
 
@@ -137,13 +153,13 @@ impl<T: Hash + Copy + PartialEq> HashRing<T> {
         if old == new {
             log::debug!(
                 "switching hashring into single mode, \
-                 because all resharding shards were removed",
+                 because the rerouting for resharding is done",
             );
 
             *self = Self::Single(old);
         }
 
-        removed_resharding
+        updated
     }
 
     pub fn get<U: Hash>(&self, key: &U) -> ShardIds<T>
@@ -179,6 +195,16 @@ impl<T: Hash + Copy + PartialEq> HashRing<T> {
     }
 }
 
+impl<T: Hash + Copy + PartialEq + Eq> HashRingRouter<T> {
+    /// Get unique nodes from the hashring
+    pub fn unique_nodes(&self) -> HashSet<T> {
+        match self {
+            Self::Single(ring) => ring.unique_nodes(),
+            Self::Resharding { new, .. } => new.unique_nodes(),
+        }
+    }
+}
+
 /// List type for shard IDs
 ///
 /// Uses a `SmallVec` putting two IDs on the stack. That's the maximum number of shards we expect
@@ -186,7 +212,7 @@ impl<T: Hash + Copy + PartialEq> HashRing<T> {
 pub type ShardIds<T = ShardId> = SmallVec<[T; 2]>;
 
 #[derive(Clone, PartialEq, Debug)]
-pub enum Inner<T> {
+pub enum HashRing<T> {
     Raw(hashring::HashRing<T>),
 
     Fair {
@@ -195,7 +221,7 @@ pub enum Inner<T> {
     },
 }
 
-impl<T: Hash + Copy> Inner<T> {
+impl<T: Hash + Copy> HashRing<T> {
     pub fn raw() -> Self {
         Self::Raw(hashring::HashRing::new())
     }
@@ -212,8 +238,8 @@ impl<T: Hash + Copy> Inner<T> {
 
     pub fn add(&mut self, shard: T) {
         match self {
-            Inner::Raw(ring) => ring.add(shard),
-            Inner::Fair { ring, scale } => {
+            HashRing::Raw(ring) => ring.add(shard),
+            HashRing::Fair { ring, scale } => {
                 for i in 0..*scale {
                     ring.add((shard, i))
                 }
@@ -223,8 +249,8 @@ impl<T: Hash + Copy> Inner<T> {
 
     pub fn remove(&mut self, shard: &T) -> bool {
         match self {
-            Inner::Raw(ring) => ring.remove(shard).is_some(),
-            Inner::Fair { ring, scale } => {
+            HashRing::Raw(ring) => ring.remove(shard).is_some(),
+            HashRing::Fair { ring, scale } => {
                 let mut removed = false;
                 for i in 0..*scale {
                     if ring.remove(&(*shard, i)).is_some() {
@@ -238,53 +264,52 @@ impl<T: Hash + Copy> Inner<T> {
 
     pub fn get<U: Hash>(&self, key: &U) -> Option<&T> {
         match self {
-            Inner::Raw(ring) => ring.get(key),
-            Inner::Fair { ring, .. } => ring.get(key).map(|(shard, _)| shard),
+            HashRing::Raw(ring) => ring.get(key),
+            HashRing::Fair { ring, .. } => ring.get(key).map(|(shard, _)| shard),
         }
     }
 
     pub fn is_empty(&self) -> bool {
         match self {
-            Inner::Raw(ring) => ring.is_empty(),
-            Inner::Fair { ring, .. } => ring.is_empty(),
+            HashRing::Raw(ring) => ring.is_empty(),
+            HashRing::Fair { ring, .. } => ring.is_empty(),
         }
     }
 
     pub fn len(&self) -> usize {
         match self {
-            Inner::Raw(ring) => ring.len(),
-            Inner::Fair { ring, scale } => ring.len() / *scale as usize,
+            HashRing::Raw(ring) => ring.len(),
+            HashRing::Fair { ring, scale } => ring.len() / *scale as usize,
+        }
+    }
+}
+
+impl<T: Hash + Copy + PartialEq + Eq> HashRing<T> {
+    /// Get unique nodes from the hashring
+    pub fn unique_nodes(&self) -> HashSet<T> {
+        match self {
+            HashRing::Raw(ring) => ring.clone().into_iter().collect(),
+            HashRing::Fair { ring, .. } => ring.clone().into_iter().map(|(node, _)| node).collect(),
         }
     }
 }
 
 #[derive(Clone, Debug, PartialEq)]
-pub struct Filter<T = ShardId> {
-    ring: Inner<T>,
-    filter: T,
+pub struct HashRingFilter {
+    ring: HashRing<ShardId>,
+    expected_shard_id: ShardId,
 }
 
-impl<T> Filter<T> {
-    pub fn new(ring: Inner<T>, filter: T) -> Self {
-        Self { ring, filter }
-    }
-
-    pub fn check(&self, point_id: PointIdType) -> bool
-    where
-        T: Hash + PartialEq + Copy,
-    {
-        self.ring.get(&point_id) == Some(&self.filter)
+impl HashRingFilter {
+    pub fn new(ring: HashRing<ShardId>, expected_shard_id: ShardId) -> Self {
+        Self {
+            ring,
+            expected_shard_id,
+        }
     }
 }
 
-impl<T> ReshardingCondition for Filter<T>
-where
-    T: fmt::Debug + Hash + PartialEq + Copy + 'static,
-{
-    fn check(&self, point_id: PointIdType) -> bool {
-        self.check(point_id)
-    }
-
+impl CustomIdCheckerCondition for HashRingFilter {
     fn estimate_cardinality(&self, points: usize) -> CardinalityEstimation {
         CardinalityEstimation {
             primary_clauses: vec![],
@@ -294,15 +319,8 @@ where
         }
     }
 
-    fn eq(&self, other: &dyn ReshardingCondition) -> bool {
-        match other.as_any().downcast_ref::<Self>() {
-            Some(other) => self == other,
-            None => false,
-        }
-    }
-
-    fn as_any(&self) -> &dyn any::Any {
-        self
+    fn check(&self, point_id: PointIdType) -> bool {
+        self.ring.get(&point_id) == Some(&self.expected_shard_id)
     }
 }
 
@@ -312,7 +330,7 @@ mod tests {
 
     #[test]
     fn test_non_seq_keys() {
-        let mut ring = Inner::fair(100);
+        let mut ring = HashRing::fair(100);
         ring.add(5);
         ring.add(7);
         ring.add(8);
@@ -328,7 +346,7 @@ mod tests {
 
     #[test]
     fn test_repartition() {
-        let mut ring = Inner::fair(100);
+        let mut ring = HashRing::fair(100);
 
         ring.add(1);
         ring.add(2);

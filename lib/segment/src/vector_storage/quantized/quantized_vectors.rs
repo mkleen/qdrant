@@ -1,3 +1,4 @@
+use std::fmt;
 use std::path::{Path, PathBuf};
 use std::sync::atomic::{AtomicBool, Ordering};
 
@@ -41,6 +42,14 @@ pub const QUANTIZED_OFFSETS_PATH: &str = "quantized.offsets.data";
 pub struct QuantizedVectorsConfig {
     pub quantization_config: QuantizationConfig,
     pub vector_parameters: quantization::VectorParameters,
+}
+
+impl fmt::Debug for QuantizedVectorsConfig {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        f.debug_struct("QuantizedVectorsConfig")
+            .field("quantization_config", &self.quantization_config)
+            .finish_non_exhaustive()
+    }
 }
 
 type ScalarRamMulti = QuantizedMultivectorStorage<
@@ -94,6 +103,13 @@ pub enum QuantizedVectorStorage {
     BinaryMmapMulti(BinaryMmapMulti),
 }
 
+impl fmt::Debug for QuantizedVectorStorage {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        f.debug_tuple("QuantizedVectorStorage").finish()
+    }
+}
+
+#[derive(Debug)]
 pub struct QuantizedVectors {
     storage_impl: QuantizedVectorStorage,
     config: QuantizedVectorsConfig,
@@ -230,6 +246,15 @@ impl QuantizedVectors {
             VectorStorageEnum::DenseAppendableMemmapHalf(v) => {
                 Self::create_impl(v.as_ref(), quantization_config, path, max_threads, stopped)
             }
+            VectorStorageEnum::DenseAppendableInRam(v) => {
+                Self::create_impl(v.as_ref(), quantization_config, path, max_threads, stopped)
+            }
+            VectorStorageEnum::DenseAppendableInRamByte(v) => {
+                Self::create_impl(v.as_ref(), quantization_config, path, max_threads, stopped)
+            }
+            VectorStorageEnum::DenseAppendableInRamHalf(v) => {
+                Self::create_impl(v.as_ref(), quantization_config, path, max_threads, stopped)
+            }
             VectorStorageEnum::SparseSimple(_) => Err(OperationError::WrongSparse),
             VectorStorageEnum::MultiDenseSimple(v) => {
                 Self::create_multi_impl(v, quantization_config, path, max_threads, stopped)
@@ -247,6 +272,15 @@ impl QuantizedVectors {
                 Self::create_multi_impl(v.as_ref(), quantization_config, path, max_threads, stopped)
             }
             VectorStorageEnum::MultiDenseAppendableMemmapHalf(v) => {
+                Self::create_multi_impl(v.as_ref(), quantization_config, path, max_threads, stopped)
+            }
+            VectorStorageEnum::MultiDenseAppendableInRam(v) => {
+                Self::create_multi_impl(v.as_ref(), quantization_config, path, max_threads, stopped)
+            }
+            VectorStorageEnum::MultiDenseAppendableInRamByte(v) => {
+                Self::create_multi_impl(v.as_ref(), quantization_config, path, max_threads, stopped)
+            }
+            VectorStorageEnum::MultiDenseAppendableInRamHalf(v) => {
                 Self::create_multi_impl(v.as_ref(), quantization_config, path, max_threads, stopped)
             }
         }

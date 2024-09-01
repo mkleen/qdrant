@@ -1,6 +1,6 @@
 use charabia::Tokenize;
 
-use crate::data_types::text_index::{TextIndexParams, TokenizerType};
+use crate::data_types::index::{TextIndexParams, TokenizerType};
 
 struct WhiteSpaceTokenizer;
 
@@ -43,10 +43,10 @@ impl PrefixTokenizer {
     /// For querying prefixes, it makes sense to use a maximal ngram only.
     /// E.g.
     ///
-    /// Docs. tokens: "hello" -> ["he", "hel", "hell", "hello"]
-    /// Query tokens: "hel"   -> ["hel"]
-    /// Query tokens: "hell"  -> ["hell"]
-    /// Query tokens: "hello" -> ["hello"]
+    /// Docs. tokens: `"hello"` -> `["he", "hel", "hell", "hello"]`
+    /// Query tokens: `"hel"`   -> `["hel"]`
+    /// Query tokens: `"hell"`  -> `["hell"]`
+    /// Query tokens: `"hello"` -> `["hello"]`
     fn tokenize_query<C: FnMut(&str)>(text: &str, max_ngram: usize, mut callback: C) {
         text.split(|c| !char::is_alphanumeric(c))
             .filter(|token| !token.is_empty())
@@ -137,7 +137,7 @@ impl Tokenizer {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::data_types::text_index::TextIndexType;
+    use crate::data_types::index::TextIndexType;
 
     #[test]
     fn test_whitespace_tokenizer() {

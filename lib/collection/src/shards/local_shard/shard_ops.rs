@@ -2,12 +2,14 @@ use std::sync::Arc;
 use std::time::Duration;
 
 use async_trait::async_trait;
+use segment::data_types::facets::{FacetParams, FacetResponse};
 use segment::data_types::order_by::OrderBy;
 use segment::types::{
     ExtendedPointId, Filter, ScoredPoint, WithPayload, WithPayloadInterface, WithVector,
 };
 use tokio::runtime::Handle;
 use tokio::sync::oneshot;
+use tokio::time::error::Elapsed;
 
 use crate::collection_manager::segments_searcher::SegmentsSearcher;
 use crate::operations::types::{
@@ -113,6 +115,7 @@ impl ShardOperation for LocalShard {
         filter: Option<&Filter>,
         search_runtime_handle: &Handle,
         order_by: Option<&OrderBy>,
+        timeout: Option<Duration>,
     ) -> CollectionResult<Vec<Record>> {
         match order_by {
             None => {
@@ -123,6 +126,7 @@ impl ShardOperation for LocalShard {
                     with_vector,
                     filter,
                     search_runtime_handle,
+                    timeout,
                 )
                 .await
             }
@@ -135,6 +139,7 @@ impl ShardOperation for LocalShard {
                         filter,
                         search_runtime_handle,
                         order_by,
+                        timeout,
                     )
                     .await?;
 
@@ -168,9 +173,22 @@ impl ShardOperation for LocalShard {
             .await
     }
 
-    async fn count(&self, request: Arc<CountRequestInternal>) -> CollectionResult<CountResult> {
+    async fn count(
+        &self,
+        request: Arc<CountRequestInternal>,
+        search_runtime_handle: &Handle,
+        timeout: Option<Duration>,
+    ) -> CollectionResult<CountResult> {
         let total_count = if request.exact {
-            let all_points = self.read_filtered(request.filter.as_ref())?;
+            let timeout = timeout.unwrap_or(self.shared_storage_config.search_timeout);
+            let all_points = tokio::time::timeout(
+                timeout,
+                self.read_filtered(request.filter.as_ref(), search_runtime_handle),
+            )
+            .await
+            .map_err(|_: Elapsed| {
+                CollectionError::timeout(timeout.as_secs() as usize, "count")
+            })??;
             all_points.len()
         } else {
             self.estimate_cardinality(request.filter.as_ref())?.exp
@@ -183,8 +201,30 @@ impl ShardOperation for LocalShard {
         request: Arc<PointRequestInternal>,
         with_payload: &WithPayload,
         with_vector: &WithVector,
+        search_runtime_handle: &Handle,
+        timeout: Option<Duration>,
     ) -> CollectionResult<Vec<Record>> {
-        SegmentsSearcher::retrieve(self.segments(), &request.ids, with_payload, with_vector)
+        let timeout = timeout.unwrap_or(self.shared_storage_config.search_timeout);
+        let records_map = tokio::time::timeout(
+            timeout,
+            SegmentsSearcher::retrieve(
+                self.segments.clone(),
+                &request.ids,
+                with_payload,
+                with_vector,
+                search_runtime_handle,
+            ),
+        )
+        .await
+        .map_err(|_: Elapsed| CollectionError::timeout(timeout.as_secs() as usize, "retrieve"))??;
+
+        let ordered_records = request
+            .ids
+            .iter()
+            .filter_map(|point| records_map.get(point).cloned())
+            .collect();
+
+        Ok(ordered_records)
     }
 
     async fn query_batch(
@@ -197,5 +237,21 @@ impl ShardOperation for LocalShard {
 
         self.do_planned_query(planned_query, search_runtime_handle, timeout)
             .await
+    }
+
+    async fn facet(
+        &self,
+        request: Arc<FacetParams>,
+        search_runtime_handle: &Handle,
+        timeout: Option<Duration>,
+    ) -> CollectionResult<FacetResponse> {
+        let hits = if request.exact {
+            self.exact_facet(request, search_runtime_handle, timeout)
+                .await?
+        } else {
+            self.approx_facet(request, search_runtime_handle, timeout)
+                .await?
+        };
+        Ok(FacetResponse { hits })
     }
 }

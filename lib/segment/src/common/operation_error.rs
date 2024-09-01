@@ -5,10 +5,10 @@ use std::sync::atomic::{AtomicBool, Ordering};
 
 use atomicwrites::Error as AtomicIoError;
 use io::file_operations::FileStorageError;
+use memory::mmap_type::Error as MmapError;
 use rayon::ThreadPoolBuildError;
 use thiserror::Error;
 
-use crate::common::mmap_type::Error as MmapError;
 use crate::types::{PayloadKeyType, PointIdType, SeqNumberType};
 use crate::utils::mem::Mem;
 
@@ -58,6 +58,8 @@ pub enum OperationError {
     WrongPayloadKey { description: String },
     #[error("No range index for `order_by` key: `{key}`. Please create one to use `order_by`. Check https://qdrant.tech/documentation/concepts/indexing/#payload-index to see which payload schemas support Range conditions")]
     MissingRangeIndexForOrderBy { key: String },
+    #[error("No appropriate index for faceting: `{key}`. Please create one to facet on this field. Check https://qdrant.tech/documentation/concepts/indexing/#payload-index to see which payload schemas support Match conditions")]
+    MissingMapIndexForFacet { key: String },
 }
 
 impl OperationError {

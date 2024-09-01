@@ -43,13 +43,18 @@ pub(super) async fn transfer_stream_records(
             )));
         };
 
-        replica_set.proxify_local(remote_shard.clone()).await?;
+        replica_set
+            .proxify_local(remote_shard.clone(), None)
+            .await?;
 
         let Some(count_result) = replica_set
-            .count_local(Arc::new(CountRequestInternal {
-                filter: None,
-                exact: true,
-            }))
+            .count_local(
+                Arc::new(CountRequestInternal {
+                    filter: None,
+                    exact: true,
+                }),
+                None, // no timeout
+            )
             .await?
         else {
             return Err(CollectionError::service_error(format!(

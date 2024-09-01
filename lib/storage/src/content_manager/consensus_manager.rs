@@ -302,9 +302,8 @@ impl<C: CollectionContainer> ConsensusManager<C> {
 
         loop {
             let unapplied_index = self.persistent.read().current_unapplied_entry();
-            let entry_index = match unapplied_index {
-                Some(index) => index,
-                None => break,
+            let Some(entry_index) = unapplied_index else {
+                break;
             };
             log::debug!("Applying committed entry with index {entry_index}");
             let entry = self
@@ -375,7 +374,7 @@ impl<C: CollectionContainer> ConsensusManager<C> {
         entry: &RaftEntry,
         raw_node: &mut RawNode<T>,
     ) -> Result<bool, StorageError> {
-        let change: ConfChangeV2 = prost::Message::decode(entry.get_data())?;
+        let change: ConfChangeV2 = prost_for_raft::Message::decode(entry.get_data())?;
 
         let conf_state = raw_node.apply_conf_change(&change)?;
         log::debug!("Applied conf state {:?}", conf_state);
@@ -470,6 +469,13 @@ impl<C: CollectionContainer> ConsensusManager<C> {
                 self.persistent
                     .write()
                     .update_peer_metadata(peer_id, metadata)?;
+                Ok(true)
+            }
+
+            ConsensusOperations::UpdateClusterMetadata { key, value } => {
+                self.persistent
+                    .write()
+                    .update_cluster_metadata_key(key, value);
                 Ok(true)
             }
 
@@ -717,10 +723,6 @@ impl<C: CollectionContainer> ConsensusManager<C> {
         self.persistent.read().peer_address_by_id()
     }
 
-    pub fn peer_metadata_by_id(&self) -> PeerMetadataById {
-        self.persistent.read().peer_metadata_by_id()
-    }
-
     pub fn peer_count(&self) -> usize {
         self.persistent.read().peer_address_by_id.read().len()
     }
@@ -734,21 +736,21 @@ impl<C: CollectionContainer> ConsensusManager<C> {
     }
 
     pub fn sync_local_state(&self) -> Result<(), StorageError> {
-        self.try_update_peer_metadata()?;
+        self.try_update_peer_metadata();
         self.toc.sync_local_state()
     }
 
     /// Try to update our peer metadata if it's outdated
     ///
     /// It rate limits updating to `CONSENSUS_PEER_METADATA_UPDATE_INTERVAL`.
-    fn try_update_peer_metadata(&self) -> Result<(), StorageError> {
+    fn try_update_peer_metadata(&self) {
         // Throttle updates to prevent spamming consensus
         if Instant::now() < *self.next_peer_metadata_update_attempt.lock() {
-            return Ok(());
+            return;
         }
 
         if !self.persistent.read().is_our_metadata_outdated() {
-            return Ok(());
+            return;
         }
 
         log::debug!("Proposing consensus peer metadata update for this peer");
@@ -763,8 +765,6 @@ impl<C: CollectionContainer> ConsensusManager<C> {
         }
         *self.next_peer_metadata_update_attempt.lock() =
             Instant::now() + CONSENSUS_PEER_METADATA_UPDATE_INTERVAL;
-
-        Ok(())
     }
 }
 

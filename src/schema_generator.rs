@@ -1,5 +1,9 @@
 use api::grpc::models::{CollectionsResponse, VersionInfo};
-use api::rest::{QueryRequest, QueryRequestBatch, QueryResponse, Record, ScoredPoint};
+use api::rest::{
+    FacetRequest, FacetResponse, QueryGroupsRequest, QueryRequest, QueryRequestBatch,
+    QueryResponse, Record, ScoredPoint, SearchMatrixOffsetsResponse, SearchMatrixPairsResponse,
+    SearchMatrixRequest,
+};
 use collection::operations::cluster_ops::ClusterOperations;
 use collection::operations::consistency_params::ReadConsistency;
 use collection::operations::payload_ops::{DeletePayload, SetPayload};
@@ -84,6 +88,12 @@ struct AllDefinitions {
     be: QueryRequest,
     bf: QueryRequestBatch,
     bg: QueryResponse,
+    bh: QueryGroupsRequest,
+    bi: SearchMatrixRequest,
+    bj: SearchMatrixOffsetsResponse,
+    bk: SearchMatrixPairsResponse,
+    bl: FacetRequest,
+    bm: FacetResponse,
 }
 
 fn save_schema<T: JsonSchema>() {

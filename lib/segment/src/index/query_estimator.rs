@@ -49,21 +49,11 @@ pub fn adjust_to_available_vectors(
 
     debug_assert!(
         min <= exp,
-        "estimation: {:?}, available_vectors: {}, available_points: {}, min: {}, exp: {}",
-        estimation,
-        available_vectors,
-        available_points,
-        min,
-        exp
+        "estimation: {estimation:?}, available_vectors: {available_vectors}, available_points: {available_points}, min: {min}, exp: {exp}"
     );
     debug_assert!(
         exp <= max,
-        "estimation: {:?}, available_vectors: {}, available_points: {}, exp: {}, max: {}",
-        estimation,
-        available_vectors,
-        available_points,
-        exp,
-        max
+        "estimation: {estimation:?}, available_vectors: {available_vectors}, available_points: {available_points}, exp: {exp}, max: {max}"
     );
 
     CardinalityEstimation {
@@ -279,18 +269,15 @@ where
 
 #[cfg(test)]
 mod tests {
-    use std::collections::HashSet;
-    use std::iter::FromIterator;
-
     use super::*;
-    use crate::json_path::path;
+    use crate::json_path::JsonPath;
     use crate::types::{FieldCondition, HasIdCondition};
 
     const TOTAL: usize = 1000;
 
     fn test_condition(key: &str) -> Condition {
         Condition::Field(FieldCondition {
-            key: path(key),
+            key: JsonPath::new(key),
             r#match: None,
             range: None,
             geo_bounding_box: None,
@@ -304,7 +291,7 @@ mod tests {
         match condition {
             Condition::Filter(_) => panic!("unexpected Filter"),
             Condition::Nested(_) => panic!("unexpected Nested"),
-            Condition::Resharding(_) => panic!("unexpected Resharding"),
+            Condition::CustomIdChecker(_) => panic!("unexpected CustomIdChecker"),
             Condition::Field(field) => match field.key.to_string().as_str() {
                 "color" => CardinalityEstimation {
                     primary_clauses: vec![PrimaryCondition::Condition(field.clone())],
@@ -505,7 +492,7 @@ mod tests {
             min_should: None,
             must: None,
             must_not: Some(vec![Condition::HasId(HasIdCondition {
-                has_id: HashSet::from_iter([1, 2, 3, 4, 5].into_iter().map(|x| x.into())),
+                has_id: [1, 2, 3, 4, 5].into_iter().map(|x| x.into()).collect(),
             })]),
         };
 
@@ -536,7 +523,7 @@ mod tests {
                 }),
             ]),
             must_not: Some(vec![Condition::HasId(HasIdCondition {
-                has_id: HashSet::from_iter([1, 2, 3, 4, 5].into_iter().map(|x| x.into())),
+                has_id: [1, 2, 3, 4, 5].into_iter().map(|x| x.into()).collect(),
             })]),
         };
 

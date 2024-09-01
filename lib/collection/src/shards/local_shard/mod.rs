@@ -1,5 +1,6 @@
 pub mod clock_map;
 pub mod disk_usage_watcher;
+pub(super) mod facet;
 pub(super) mod query;
 pub(super) mod scroll;
 pub(super) mod search;
@@ -46,6 +47,7 @@ use crate::collection_manager::holders::segment_holder::{
     LockedSegment, LockedSegmentHolder, SegmentHolder,
 };
 use crate::collection_manager::optimizers::TrackerLog;
+use crate::collection_manager::segments_searcher::SegmentsSearcher;
 use crate::common::file_utils::{move_dir, move_file};
 use crate::config::CollectionConfig;
 use crate::operations::shared_storage_config::SharedStorageConfig;
@@ -76,7 +78,7 @@ pub struct LocalShard {
     pub(super) segments: LockedSegmentHolder,
     pub(super) collection_config: Arc<TokioRwLock<CollectionConfig>>,
     pub(super) shared_storage_config: Arc<SharedStorageConfig>,
-    payload_index_schema: Arc<SaveOnDisk<PayloadIndexSchema>>,
+    pub(crate) payload_index_schema: Arc<SaveOnDisk<PayloadIndexSchema>>,
     pub(super) wal: RecoverableWal,
     pub(super) update_handler: Arc<Mutex<UpdateHandler>>,
     pub(super) update_sender: ArcSwap<Sender<UpdateSignal>>,
@@ -85,6 +87,7 @@ pub struct LocalShard {
     pub(super) optimizers: Arc<Vec<Arc<Optimizer>>>,
     pub(super) optimizers_log: Arc<ParkingMutex<TrackerLog>>,
     update_runtime: Handle,
+    pub(super) search_runtime: Handle,
     disk_usage_watcher: DiskUsageWatcher,
 }
 
@@ -144,6 +147,7 @@ impl LocalShard {
         shard_path: &Path,
         clocks: LocalShardClocks,
         update_runtime: Handle,
+        search_runtime: Handle,
     ) -> Self {
         let segment_holder = Arc::new(RwLock::new(segment_holder));
         let config = collection_config.read().await;
@@ -194,6 +198,7 @@ impl LocalShard {
             update_tracker,
             path: shard_path.to_owned(),
             update_runtime,
+            search_runtime,
             optimizers,
             optimizers_log,
             disk_usage_watcher,
@@ -215,6 +220,7 @@ impl LocalShard {
         shared_storage_config: Arc<SharedStorageConfig>,
         payload_index_schema: Arc<SaveOnDisk<PayloadIndexSchema>>,
         update_runtime: Handle,
+        search_runtime: Handle,
         optimizer_cpu_budget: CpuBudget,
     ) -> CollectionResult<LocalShard> {
         let collection_config_read = collection_config.read().await;
@@ -350,6 +356,7 @@ impl LocalShard {
             shard_path,
             clocks,
             update_runtime,
+            search_runtime,
         )
         .await;
 
@@ -401,6 +408,7 @@ impl LocalShard {
         shared_storage_config: Arc<SharedStorageConfig>,
         payload_index_schema: Arc<SaveOnDisk<PayloadIndexSchema>>,
         update_runtime: Handle,
+        search_runtime: Handle,
         optimizer_cpu_budget: CpuBudget,
         effective_optimizers_config: OptimizersConfig,
     ) -> CollectionResult<LocalShard> {
@@ -414,6 +422,7 @@ impl LocalShard {
             shared_storage_config,
             payload_index_schema,
             update_runtime,
+            search_runtime,
             optimizer_cpu_budget,
             effective_optimizers_config,
         )
@@ -432,6 +441,7 @@ impl LocalShard {
         shared_storage_config: Arc<SharedStorageConfig>,
         payload_index_schema: Arc<SaveOnDisk<PayloadIndexSchema>>,
         update_runtime: Handle,
+        search_runtime: Handle,
         optimizer_cpu_budget: CpuBudget,
         effective_optimizers_config: OptimizersConfig,
     ) -> CollectionResult<LocalShard> {
@@ -520,6 +530,7 @@ impl LocalShard {
             shard_path,
             LocalShardClocks::default(),
             update_runtime,
+            search_runtime,
         )
         .await;
 
@@ -634,7 +645,11 @@ impl LocalShard {
                     }
                 }
             }
-            segments.flush_all(true)?;
+
+            // Force a flush after re-applying WAL operations, to ensure we maintain on-disk data
+            // consistency, if we happened to only apply *past* operations to a segment with newer
+            // version.
+            segments.flush_all(true, true)?;
         }
 
         bar.finish();
@@ -860,11 +875,6 @@ impl LocalShard {
         filter: Option<&'a Filter>,
     ) -> CollectionResult<CardinalityEstimation> {
         let segments = self.segments().read();
-        let some_segment = segments.iter().next();
-
-        if some_segment.is_none() {
-            return Ok(CardinalityEstimation::exact(0));
-        }
         let cardinality = segments
             .iter()
             .map(|(_id, segment)| segment.get().read().estimate_point_count(filter))
@@ -879,16 +889,13 @@ impl LocalShard {
         Ok(cardinality)
     }
 
-    pub fn read_filtered<'a>(
+    pub async fn read_filtered<'a>(
         &'a self,
         filter: Option<&'a Filter>,
+        runtime_handle: &Handle,
     ) -> CollectionResult<BTreeSet<PointIdType>> {
-        let segments = self.segments().read();
-        let all_points: BTreeSet<_> = segments
-            .non_appendable_then_appendable_segments()
-            .flat_map(|segment| segment.get().read().read_filtered(None, None, filter))
-            .collect();
-        Ok(all_points)
+        let segments = self.segments.clone();
+        SegmentsSearcher::read_filtered(segments, filter, runtime_handle).await
     }
 
     pub fn get_telemetry_data(&self, detail: TelemetryDetail) -> LocalShardTelemetry {

@@ -68,10 +68,12 @@
                     "time": {
                       "type": "number",
                       "format": "float",
-                      "description": "Time spent to process this request"
+                      "description": "Time spent to process this request",
+                      "example": 0.002
                     },
                     "status": {
-                      "type": "string"
+                      "type": "string",
+                      "example": "ok"
                     },
                     "result": {
                       "type": "boolean"
@@ -152,10 +154,12 @@
                     "time": {
                       "type": "number",
                       "format": "float",
-                      "description": "Time spent to process this request"
+                      "description": "Time spent to process this request",
+                      "example": 0.002
                     },
                     "status": {
-                      "type": "string"
+                      "type": "string",
+                      "example": "ok"
                     },
                     "result": {
                       "type": "boolean"
@@ -177,48 +181,18 @@
           "service"
         ],
         "responses": {
-          "default": {
-            "description": "error",
+          "200": {
+            "description": "Qdrant server version information",
             "content": {
               "application/json": {
                 "schema": {
-                  "$ref": "#/components/schemas/ErrorResponse"
+                  "$ref": "#/components/schemas/VersionInfo"
                 }
               }
             }
           },
           "4XX": {
-            "description": "error",
-            "content": {
-              "application/json": {
-                "schema": {
-                  "$ref": "#/components/schemas/ErrorResponse"
-                }
-              }
-            }
-          },
-          "200": {
-            "description": "successful operation",
-            "content": {
-              "application/json": {
-                "schema": {
-                  "type": "object",
-                  "properties": {
-                    "time": {
-                      "type": "number",
-                      "format": "float",
-                      "description": "Time spent to process this request"
-                    },
-                    "status": {
-                      "type": "string"
-                    },
-                    "result": {
-                      "$ref": "#/components/schemas/VersionInfo"
-                    }
-                  }
-                }
-              }
-            }
+            "description": "error"
           }
         }
       }
@@ -273,10 +247,12 @@
                     "time": {
                       "type": "number",
                       "format": "float",
-                      "description": "Time spent to process this request"
+                      "description": "Time spent to process this request",
+                      "example": 0.002
                     },
                     "status": {
-                      "type": "string"
+                      "type": "string",
+                      "example": "ok"
                     },
                     "result": {
                       "$ref": "#/components/schemas/TelemetryData"
@@ -315,7 +291,7 @@
               "text/plain": {
                 "schema": {
                   "type": "string",
-                  "example": "# HELP app_info information about qdrant server\n# TYPE app_info counter\napp_info{name=\"qdrant\",version=\"0.11.1\"} 1\n# HELP cluster_enabled is cluster support enabled\n# TYPE cluster_enabled gauge\ncluster_enabled 0\n# HELP collections_total number of collections\n# TYPE collections_total gauge\ncollections_total 1\n"
+                  "example": "# HELP app_info information about qdrant server\n# TYPE app_info gauge\napp_info{name=\"qdrant\",version=\"0.11.1\"} 1\n# HELP cluster_enabled is cluster support enabled\n# TYPE cluster_enabled gauge\ncluster_enabled 0\n# HELP collections_total number of collections\n# TYPE collections_total gauge\ncollections_total 1\n"
                 }
               }
             }
@@ -375,10 +351,12 @@
                     "time": {
                       "type": "number",
                       "format": "float",
-                      "description": "Time spent to process this request"
+                      "description": "Time spent to process this request",
+                      "example": 0.002
                     },
                     "status": {
-                      "type": "string"
+                      "type": "string",
+                      "example": "ok"
                     },
                     "result": {
                       "$ref": "#/components/schemas/LocksOption"
@@ -428,10 +406,12 @@
                     "time": {
                       "type": "number",
                       "format": "float",
-                      "description": "Time spent to process this request"
+                      "description": "Time spent to process this request",
+                      "example": 0.002
                     },
                     "status": {
-                      "type": "string"
+                      "type": "string",
+                      "example": "ok"
                     },
                     "result": {
                       "$ref": "#/components/schemas/LocksOption"
@@ -609,10 +589,12 @@
                     "time": {
                       "type": "number",
                       "format": "float",
-                      "description": "Time spent to process this request"
+                      "description": "Time spent to process this request",
+                      "example": 0.002
                     },
                     "status": {
-                      "type": "string"
+                      "type": "string",
+                      "example": "ok"
                     },
                     "result": {
                       "$ref": "#/components/schemas/ClusterStatus"
@@ -663,10 +645,12 @@
                     "time": {
                       "type": "number",
                       "format": "float",
-                      "description": "Time spent to process this request"
+                      "description": "Time spent to process this request",
+                      "example": 0.002
                     },
                     "status": {
-                      "type": "string"
+                      "type": "string",
+                      "example": "ok"
                     },
                     "result": {
                       "type": "boolean"
@@ -738,10 +722,12 @@
                     "time": {
                       "type": "number",
                       "format": "float",
-                      "description": "Time spent to process this request"
+                      "description": "Time spent to process this request",
+                      "example": 0.002
                     },
                     "status": {
-                      "type": "string"
+                      "type": "string",
+                      "example": "ok"
                     },
                     "result": {
                       "type": "boolean"
@@ -793,10 +779,12 @@
                     "time": {
                       "type": "number",
                       "format": "float",
-                      "description": "Time spent to process this request"
+                      "description": "Time spent to process this request",
+                      "example": 0.002
                     },
                     "status": {
-                      "type": "string"
+                      "type": "string",
+                      "example": "ok"
                     },
                     "result": {
                       "$ref": "#/components/schemas/CollectionsResponse"
@@ -859,10 +847,12 @@
                     "time": {
                       "type": "number",
                       "format": "float",
-                      "description": "Time spent to process this request"
+                      "description": "Time spent to process this request",
+                      "example": 0.002
                     },
                     "status": {
-                      "type": "string"
+                      "type": "string",
+                      "example": "ok"
                     },
                     "result": {
                       "$ref": "#/components/schemas/CollectionInfo"
@@ -941,10 +931,12 @@
                     "time": {
                       "type": "number",
                       "format": "float",
-                      "description": "Time spent to process this request"
+                      "description": "Time spent to process this request",
+                      "example": 0.002
                     },
                     "status": {
-                      "type": "string"
+                      "type": "string",
+                      "example": "ok"
                     },
                     "result": {
                       "type": "boolean"
@@ -1023,10 +1015,12 @@
                     "time": {
                       "type": "number",
                       "format": "float",
-                      "description": "Time spent to process this request"
+                      "description": "Time spent to process this request",
+                      "example": 0.002
                     },
                     "status": {
-                      "type": "string"
+                      "type": "string",
+                      "example": "ok"
                     },
                     "result": {
                       "type": "boolean"
@@ -1095,10 +1089,12 @@
                     "time": {
                       "type": "number",
                       "format": "float",
-                      "description": "Time spent to process this request"
+                      "description": "Time spent to process this request",
+                      "example": 0.002
                     },
                     "status": {
-                      "type": "string"
+                      "type": "string",
+                      "example": "ok"
                     },
                     "result": {
                       "type": "boolean"
@@ -1169,10 +1165,12 @@
                     "time": {
                       "type": "number",
                       "format": "float",
-                      "description": "Time spent to process this request"
+                      "description": "Time spent to process this request",
+                      "example": 0.002
                     },
                     "status": {
-                      "type": "string"
+                      "type": "string",
+                      "example": "ok"
                     },
                     "result": {
                       "type": "boolean"
@@ -1263,10 +1261,12 @@
                     "time": {
                       "type": "number",
                       "format": "float",
-                      "description": "Time spent to process this request"
+                      "description": "Time spent to process this request",
+                      "example": 0.002
                     },
                     "status": {
-                      "type": "string"
+                      "type": "string",
+                      "example": "ok"
                     },
                     "result": {
                       "$ref": "#/components/schemas/UpdateResult"
@@ -1329,10 +1329,12 @@
                     "time": {
                       "type": "number",
                       "format": "float",
-                      "description": "Time spent to process this request"
+                      "description": "Time spent to process this request",
+                      "example": 0.002
                     },
                     "status": {
-                      "type": "string"
+                      "type": "string",
+                      "example": "ok"
                     },
                     "result": {
                       "$ref": "#/components/schemas/CollectionExistence"
@@ -1422,10 +1424,12 @@
                     "time": {
                       "type": "number",
                       "format": "float",
-                      "description": "Time spent to process this request"
+                      "description": "Time spent to process this request",
+                      "example": 0.002
                     },
                     "status": {
-                      "type": "string"
+                      "type": "string",
+                      "example": "ok"
                     },
                     "result": {
                       "$ref": "#/components/schemas/UpdateResult"
@@ -1489,10 +1493,12 @@
                     "time": {
                       "type": "number",
                       "format": "float",
-                      "description": "Time spent to process this request"
+                      "description": "Time spent to process this request",
+                      "example": 0.002
                     },
                     "status": {
-                      "type": "string"
+                      "type": "string",
+                      "example": "ok"
                     },
                     "result": {
                       "$ref": "#/components/schemas/CollectionClusterInfo"
@@ -1571,10 +1577,12 @@
                     "time": {
                       "type": "number",
                       "format": "float",
-                      "description": "Time spent to process this request"
+                      "description": "Time spent to process this request",
+                      "example": 0.002
                     },
                     "status": {
-                      "type": "string"
+                      "type": "string",
+                      "example": "ok"
                     },
                     "result": {
                       "type": "boolean"
@@ -1637,10 +1645,12 @@
                     "time": {
                       "type": "number",
                       "format": "float",
-                      "description": "Time spent to process this request"
+                      "description": "Time spent to process this request",
+                      "example": 0.002
                     },
                     "status": {
-                      "type": "string"
+                      "type": "string",
+                      "example": "ok"
                     },
                     "result": {
                       "$ref": "#/components/schemas/CollectionsAliasesResponse"
@@ -1692,10 +1702,12 @@
                     "time": {
                       "type": "number",
                       "format": "float",
-                      "description": "Time spent to process this request"
+                      "description": "Time spent to process this request",
+                      "example": 0.002
                     },
                     "status": {
-                      "type": "string"
+                      "type": "string",
+                      "example": "ok"
                     },
                     "result": {
                       "$ref": "#/components/schemas/CollectionsAliasesResponse"
@@ -1802,10 +1814,12 @@
                     "time": {
                       "type": "number",
                       "format": "float",
-                      "description": "Time spent to process this request"
+                      "description": "Time spent to process this request",
+                      "example": 0.002
                     },
                     "status": {
-                      "type": "string"
+                      "type": "string",
+                      "example": "ok"
                     },
                     "result": {
                       "type": "boolean"
@@ -1908,10 +1922,12 @@
                     "time": {
                       "type": "number",
                       "format": "float",
-                      "description": "Time spent to process this request"
+                      "description": "Time spent to process this request",
+                      "example": 0.002
                     },
                     "status": {
-                      "type": "string"
+                      "type": "string",
+                      "example": "ok"
                     },
                     "result": {
                       "type": "boolean"
@@ -1995,10 +2011,12 @@
                     "time": {
                       "type": "number",
                       "format": "float",
-                      "description": "Time spent to process this request"
+                      "description": "Time spent to process this request",
+                      "example": 0.002
                     },
                     "status": {
-                      "type": "string"
+                      "type": "string",
+                      "example": "ok"
                     },
                     "result": {
                       "type": "array",
@@ -2072,10 +2090,12 @@
                     "time": {
                       "type": "number",
                       "format": "float",
-                      "description": "Time spent to process this request"
+                      "description": "Time spent to process this request",
+                      "example": 0.002
                     },
                     "status": {
-                      "type": "string"
+                      "type": "string",
+                      "example": "ok"
                     },
                     "result": {
                       "$ref": "#/components/schemas/SnapshotDescription"
@@ -2177,10 +2197,12 @@
                     "time": {
                       "type": "number",
                       "format": "float",
-                      "description": "Time spent to process this request"
+                      "description": "Time spent to process this request",
+                      "example": 0.002
                     },
                     "status": {
-                      "type": "string"
+                      "type": "string",
+                      "example": "ok"
                     },
                     "result": {
                       "type": "boolean"
@@ -2314,10 +2336,12 @@
                     "time": {
                       "type": "number",
                       "format": "float",
-                      "description": "Time spent to process this request"
+                      "description": "Time spent to process this request",
+                      "example": 0.002
                     },
                     "status": {
-                      "type": "string"
+                      "type": "string",
+                      "example": "ok"
                     },
                     "result": {
                       "type": "array",
@@ -2381,10 +2405,12 @@
                     "time": {
                       "type": "number",
                       "format": "float",
-                      "description": "Time spent to process this request"
+                      "description": "Time spent to process this request",
+                      "example": 0.002
                     },
                     "status": {
-                      "type": "string"
+                      "type": "string",
+                      "example": "ok"
                     },
                     "result": {
                       "$ref": "#/components/schemas/SnapshotDescription"
@@ -2476,10 +2502,12 @@
                     "time": {
                       "type": "number",
                       "format": "float",
-                      "description": "Time spent to process this request"
+                      "description": "Time spent to process this request",
+                      "example": 0.002
                     },
                     "status": {
-                      "type": "string"
+                      "type": "string",
+                      "example": "ok"
                     },
                     "result": {
                       "type": "boolean"
@@ -2667,10 +2695,12 @@
                     "time": {
                       "type": "number",
                       "format": "float",
-                      "description": "Time spent to process this request"
+                      "description": "Time spent to process this request",
+                      "example": 0.002
                     },
                     "status": {
-                      "type": "string"
+                      "type": "string",
+                      "example": "ok"
                     },
                     "result": {
                       "type": "boolean"
@@ -2782,10 +2812,12 @@
                     "time": {
                       "type": "number",
                       "format": "float",
-                      "description": "Time spent to process this request"
+                      "description": "Time spent to process this request",
+                      "example": 0.002
                     },
                     "status": {
-                      "type": "string"
+                      "type": "string",
+                      "example": "ok"
                     },
                     "result": {
                       "type": "boolean"
@@ -2878,10 +2910,12 @@
                     "time": {
                       "type": "number",
                       "format": "float",
-                      "description": "Time spent to process this request"
+                      "description": "Time spent to process this request",
+                      "example": 0.002
                     },
                     "status": {
-                      "type": "string"
+                      "type": "string",
+                      "example": "ok"
                     },
                     "result": {
                       "type": "array",
@@ -2964,10 +2998,12 @@
                     "time": {
                       "type": "number",
                       "format": "float",
-                      "description": "Time spent to process this request"
+                      "description": "Time spent to process this request",
+                      "example": 0.002
                     },
                     "status": {
-                      "type": "string"
+                      "type": "string",
+                      "example": "ok"
                     },
                     "result": {
                       "$ref": "#/components/schemas/SnapshotDescription"
@@ -3078,10 +3114,12 @@
                     "time": {
                       "type": "number",
                       "format": "float",
-                      "description": "Time spent to process this request"
+                      "description": "Time spent to process this request",
+                      "example": 0.002
                     },
                     "status": {
-                      "type": "string"
+                      "type": "string",
+                      "example": "ok"
                     },
                     "result": {
                       "type": "boolean"
@@ -3253,10 +3291,12 @@
                     "time": {
                       "type": "number",
                       "format": "float",
-                      "description": "Time spent to process this request"
+                      "description": "Time spent to process this request",
+                      "example": 0.002
                     },
                     "status": {
-                      "type": "string"
+                      "type": "string",
+                      "example": "ok"
                     },
                     "result": {
                       "$ref": "#/components/schemas/Record"
@@ -3305,6 +3345,16 @@
             "schema": {
               "$ref": "#/components/schemas/ReadConsistency"
             }
+          },
+          {
+            "name": "timeout",
+            "in": "query",
+            "description": "If set, overrides global timeout for this request. Unit is seconds.",
+            "required": false,
+            "schema": {
+              "type": "integer",
+              "minimum": 1
+            }
           }
         ],
         "responses": {
@@ -3338,10 +3388,12 @@
                     "time": {
                       "type": "number",
                       "format": "float",
-                      "description": "Time spent to process this request"
+                      "description": "Time spent to process this request",
+                      "example": 0.002
                     },
                     "status": {
-                      "type": "string"
+                      "type": "string",
+                      "example": "ok"
                     },
                     "result": {
                       "type": "array",
@@ -3433,10 +3485,12 @@
                     "time": {
                       "type": "number",
                       "format": "float",
-                      "description": "Time spent to process this request"
+                      "description": "Time spent to process this request",
+                      "example": 0.002
                     },
                     "status": {
-                      "type": "string"
+                      "type": "string",
+                      "example": "ok"
                     },
                     "result": {
                       "$ref": "#/components/schemas/UpdateResult"
@@ -3527,10 +3581,12 @@
                     "time": {
                       "type": "number",
                       "format": "float",
-                      "description": "Time spent to process this request"
+                      "description": "Time spent to process this request",
+                      "example": 0.002
                     },
                     "status": {
-                      "type": "string"
+                      "type": "string",
+                      "example": "ok"
                     },
                     "result": {
                       "$ref": "#/components/schemas/UpdateResult"
@@ -3621,10 +3677,12 @@
                     "time": {
                       "type": "number",
                       "format": "float",
-                      "description": "Time spent to process this request"
+                      "description": "Time spent to process this request",
+                      "example": 0.002
                     },
                     "status": {
-                      "type": "string"
+                      "type": "string",
+                      "example": "ok"
                     },
                     "result": {
                       "$ref": "#/components/schemas/UpdateResult"
@@ -3715,10 +3773,12 @@
                     "time": {
                       "type": "number",
                       "format": "float",
-                      "description": "Time spent to process this request"
+                      "description": "Time spent to process this request",
+                      "example": 0.002
                     },
                     "status": {
-                      "type": "string"
+                      "type": "string",
+                      "example": "ok"
                     },
                     "result": {
                       "$ref": "#/components/schemas/UpdateResult"
@@ -3809,10 +3869,12 @@
                     "time": {
                       "type": "number",
                       "format": "float",
-                      "description": "Time spent to process this request"
+                      "description": "Time spent to process this request",
+                      "example": 0.002
                     },
                     "status": {
-                      "type": "string"
+                      "type": "string",
+                      "example": "ok"
                     },
                     "result": {
                       "$ref": "#/components/schemas/UpdateResult"
@@ -3901,10 +3963,12 @@
                     "time": {
                       "type": "number",
                       "format": "float",
-                      "description": "Time spent to process this request"
+                      "description": "Time spent to process this request",
+                      "example": 0.002
                     },
                     "status": {
-                      "type": "string"
+                      "type": "string",
+                      "example": "ok"
                     },
                     "result": {
                       "$ref": "#/components/schemas/UpdateResult"
@@ -3995,10 +4059,12 @@
                     "time": {
                       "type": "number",
                       "format": "float",
-                      "description": "Time spent to process this request"
+                      "description": "Time spent to process this request",
+                      "example": 0.002
                     },
                     "status": {
-                      "type": "string"
+                      "type": "string",
+                      "example": "ok"
                     },
                     "result": {
                       "$ref": "#/components/schemas/UpdateResult"
@@ -4089,10 +4155,12 @@
                     "time": {
                       "type": "number",
                       "format": "float",
-                      "description": "Time spent to process this request"
+                      "description": "Time spent to process this request",
+                      "example": 0.002
                     },
                     "status": {
-                      "type": "string"
+                      "type": "string",
+                      "example": "ok"
                     },
                     "result": {
                       "$ref": "#/components/schemas/UpdateResult"
@@ -4183,10 +4251,12 @@
                     "time": {
                       "type": "number",
                       "format": "float",
-                      "description": "Time spent to process this request"
+                      "description": "Time spent to process this request",
+                      "example": 0.002
                     },
                     "status": {
-                      "type": "string"
+                      "type": "string",
+                      "example": "ok"
                     },
                     "result": {
                       "type": "array",
@@ -4238,6 +4308,16 @@
             "schema": {
               "$ref": "#/components/schemas/ReadConsistency"
             }
+          },
+          {
+            "name": "timeout",
+            "in": "query",
+            "description": "If set, overrides global timeout for this request. Unit is seconds.",
+            "required": false,
+            "schema": {
+              "type": "integer",
+              "minimum": 1
+            }
           }
         ],
         "responses": {
@@ -4271,10 +4351,12 @@
                     "time": {
                       "type": "number",
                       "format": "float",
-                      "description": "Time spent to process this request"
+                      "description": "Time spent to process this request",
+                      "example": 0.002
                     },
                     "status": {
-                      "type": "string"
+                      "type": "string",
+                      "example": "ok"
                     },
                     "result": {
                       "$ref": "#/components/schemas/ScrollResult"
@@ -4366,10 +4448,12 @@
                     "time": {
                       "type": "number",
                       "format": "float",
-                      "description": "Time spent to process this request"
+                      "description": "Time spent to process this request",
+                      "example": 0.002
                     },
                     "status": {
-                      "type": "string"
+                      "type": "string",
+                      "example": "ok"
                     },
                     "result": {
                       "type": "array",
@@ -4464,10 +4548,12 @@
                     "time": {
                       "type": "number",
                       "format": "float",
-                      "description": "Time spent to process this request"
+                      "description": "Time spent to process this request",
+                      "example": 0.002
                     },
                     "status": {
-                      "type": "string"
+                      "type": "string",
+                      "example": "ok"
                     },
                     "result": {
                       "type": "array",
@@ -4565,10 +4651,12 @@
                     "time": {
                       "type": "number",
                       "format": "float",
-                      "description": "Time spent to process this request"
+                      "description": "Time spent to process this request",
+                      "example": 0.002
                     },
                     "status": {
-                      "type": "string"
+                      "type": "string",
+                      "example": "ok"
                     },
                     "result": {
                       "$ref": "#/components/schemas/GroupsResult"
@@ -4660,10 +4748,12 @@
                     "time": {
                       "type": "number",
                       "format": "float",
-                      "description": "Time spent to process this request"
+                      "description": "Time spent to process this request",
+                      "example": 0.002
                     },
                     "status": {
-                      "type": "string"
+                      "type": "string",
+                      "example": "ok"
                     },
                     "result": {
                       "type": "array",
@@ -4758,10 +4848,12 @@
                     "time": {
                       "type": "number",
                       "format": "float",
-                      "description": "Time spent to process this request"
+                      "description": "Time spent to process this request",
+                      "example": 0.002
                     },
                     "status": {
-                      "type": "string"
+                      "type": "string",
+                      "example": "ok"
                     },
                     "result": {
                       "type": "array",
@@ -4859,10 +4951,12 @@
                     "time": {
                       "type": "number",
                       "format": "float",
-                      "description": "Time spent to process this request"
+                      "description": "Time spent to process this request",
+                      "example": 0.002
                     },
                     "status": {
-                      "type": "string"
+                      "type": "string",
+                      "example": "ok"
                     },
                     "result": {
                       "$ref": "#/components/schemas/GroupsResult"
@@ -4954,10 +5048,12 @@
                     "time": {
                       "type": "number",
                       "format": "float",
-                      "description": "Time spent to process this request"
+                      "description": "Time spent to process this request",
+                      "example": 0.002
                     },
                     "status": {
-                      "type": "string"
+                      "type": "string",
+                      "example": "ok"
                     },
                     "result": {
                       "type": "array",
@@ -5052,10 +5148,12 @@
                     "time": {
                       "type": "number",
                       "format": "float",
-                      "description": "Time spent to process this request"
+                      "description": "Time spent to process this request",
+                      "example": 0.002
                     },
                     "status": {
-                      "type": "string"
+                      "type": "string",
+                      "example": "ok"
                     },
                     "result": {
                       "type": "array",
@@ -5101,6 +5199,16 @@
             "schema": {
               "type": "string"
             }
+          },
+          {
+            "name": "timeout",
+            "in": "query",
+            "description": "If set, overrides global timeout for this request. Unit is seconds.",
+            "required": false,
+            "schema": {
+              "type": "integer",
+              "minimum": 1
+            }
           }
         ],
         "responses": {
@@ -5134,13 +5242,112 @@
                     "time": {
                       "type": "number",
                       "format": "float",
-                      "description": "Time spent to process this request"
+                      "description": "Time spent to process this request",
+                      "example": 0.002
                     },
                     "status": {
-                      "type": "string"
+                      "type": "string",
+                      "example": "ok"
                     },
                     "result": {
                       "$ref": "#/components/schemas/CountResult"
+                    }
+                  }
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/collections/{collection_name}/facet": {
+      "post": {
+        "tags": [
+          "points"
+        ],
+        "summary": "Facet a payload key with a given filter.",
+        "description": "Count points that satisfy the given filter for each unique value of a payload key.",
+        "operationId": "facet",
+        "requestBody": {
+          "description": "Request counts of points for each unique value of a payload key",
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/FacetRequest"
+              }
+            }
+          }
+        },
+        "parameters": [
+          {
+            "name": "collection_name",
+            "in": "path",
+            "description": "Name of the collection to facet in",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          },
+          {
+            "name": "timeout",
+            "in": "query",
+            "description": "If set, overrides global timeout for this request. Unit is seconds.",
+            "required": false,
+            "schema": {
+              "type": "integer",
+              "minimum": 1
+            }
+          },
+          {
+            "name": "consistency",
+            "in": "query",
+            "description": "Define read consistency guarantees for the operation",
+            "required": false,
+            "schema": {
+              "$ref": "#/components/schemas/ReadConsistency"
+            }
+          }
+        ],
+        "responses": {
+          "default": {
+            "description": "error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            }
+          },
+          "4XX": {
+            "description": "error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            }
+          },
+          "200": {
+            "description": "successful operation",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "properties": {
+                    "time": {
+                      "type": "number",
+                      "format": "float",
+                      "description": "Time spent to process this request",
+                      "example": 0.002
+                    },
+                    "status": {
+                      "type": "string",
+                      "example": "ok"
+                    },
+                    "result": {
+                      "$ref": "#/components/schemas/FacetResponse"
                     }
                   }
                 }
@@ -5229,10 +5436,12 @@
                     "time": {
                       "type": "number",
                       "format": "float",
-                      "description": "Time spent to process this request"
+                      "description": "Time spent to process this request",
+                      "example": 0.002
                     },
                     "status": {
-                      "type": "string"
+                      "type": "string",
+                      "example": "ok"
                     },
                     "result": {
                       "$ref": "#/components/schemas/QueryResponse"
@@ -5324,16 +5533,309 @@
                     "time": {
                       "type": "number",
                       "format": "float",
-                      "description": "Time spent to process this request"
+                      "description": "Time spent to process this request",
+                      "example": 0.002
                     },
                     "status": {
-                      "type": "string"
+                      "type": "string",
+                      "example": "ok"
                     },
                     "result": {
                       "type": "array",
                       "items": {
                         "$ref": "#/components/schemas/QueryResponse"
                       }
+                    }
+                  }
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/collections/{collection_name}/points/query/groups": {
+      "post": {
+        "tags": [
+          "points"
+        ],
+        "summary": "Query points, grouped by a given payload field",
+        "description": "Universally query points, grouped by a given payload field",
+        "operationId": "query_points_groups",
+        "requestBody": {
+          "description": "Describes the query to make to the collection",
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/QueryGroupsRequest"
+              }
+            }
+          }
+        },
+        "parameters": [
+          {
+            "name": "collection_name",
+            "in": "path",
+            "description": "Name of the collection to query",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          },
+          {
+            "name": "consistency",
+            "in": "query",
+            "description": "Define read consistency guarantees for the operation",
+            "required": false,
+            "schema": {
+              "$ref": "#/components/schemas/ReadConsistency"
+            }
+          },
+          {
+            "name": "timeout",
+            "in": "query",
+            "description": "If set, overrides global timeout for this request. Unit is seconds.",
+            "required": false,
+            "schema": {
+              "type": "integer",
+              "minimum": 1
+            }
+          }
+        ],
+        "responses": {
+          "default": {
+            "description": "error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            }
+          },
+          "4XX": {
+            "description": "error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            }
+          },
+          "200": {
+            "description": "successful operation",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "properties": {
+                    "time": {
+                      "type": "number",
+                      "format": "float",
+                      "description": "Time spent to process this request",
+                      "example": 0.002
+                    },
+                    "status": {
+                      "type": "string",
+                      "example": "ok"
+                    },
+                    "result": {
+                      "$ref": "#/components/schemas/GroupsResult"
+                    }
+                  }
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/collections/{collection_name}/points/search/matrix/pairs": {
+      "post": {
+        "tags": [
+          "points"
+        ],
+        "summary": "Search points matrix distance pairs",
+        "description": "Retrieve distance matrix with a pair based output format",
+        "operationId": "search_points_matrix_pairs",
+        "requestBody": {
+          "description": "Search matrix request with optional filtering",
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/SearchMatrixRequest"
+              }
+            }
+          }
+        },
+        "parameters": [
+          {
+            "name": "collection_name",
+            "in": "path",
+            "description": "Name of the collection to search in",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          },
+          {
+            "name": "consistency",
+            "in": "query",
+            "description": "Define read consistency guarantees for the operation",
+            "required": false,
+            "schema": {
+              "$ref": "#/components/schemas/ReadConsistency"
+            }
+          },
+          {
+            "name": "timeout",
+            "in": "query",
+            "description": "If set, overrides global timeout for this request. Unit is seconds.",
+            "required": false,
+            "schema": {
+              "type": "integer",
+              "minimum": 1
+            }
+          }
+        ],
+        "responses": {
+          "default": {
+            "description": "error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            }
+          },
+          "4XX": {
+            "description": "error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            }
+          },
+          "200": {
+            "description": "successful operation",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "properties": {
+                    "time": {
+                      "type": "number",
+                      "format": "float",
+                      "description": "Time spent to process this request",
+                      "example": 0.002
+                    },
+                    "status": {
+                      "type": "string",
+                      "example": "ok"
+                    },
+                    "result": {
+                      "$ref": "#/components/schemas/SearchMatrixPairsResponse"
+                    }
+                  }
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/collections/{collection_name}/points/search/matrix/offsets": {
+      "post": {
+        "tags": [
+          "points"
+        ],
+        "summary": "Search points matrix distance offsets",
+        "description": "Retrieve distance matrix with an offset based output format",
+        "operationId": "search_points_matrix_offsets",
+        "requestBody": {
+          "description": "Search matrix request with optional filtering",
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/SearchMatrixRequest"
+              }
+            }
+          }
+        },
+        "parameters": [
+          {
+            "name": "collection_name",
+            "in": "path",
+            "description": "Name of the collection to search in",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          },
+          {
+            "name": "consistency",
+            "in": "query",
+            "description": "Define read consistency guarantees for the operation",
+            "required": false,
+            "schema": {
+              "$ref": "#/components/schemas/ReadConsistency"
+            }
+          },
+          {
+            "name": "timeout",
+            "in": "query",
+            "description": "If set, overrides global timeout for this request. Unit is seconds.",
+            "required": false,
+            "schema": {
+              "type": "integer",
+              "minimum": 1
+            }
+          }
+        ],
+        "responses": {
+          "default": {
+            "description": "error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            }
+          },
+          "4XX": {
+            "description": "error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            }
+          },
+          "200": {
+            "description": "successful operation",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "properties": {
+                    "time": {
+                      "type": "number",
+                      "format": "float",
+                      "description": "Time spent to process this request",
+                      "example": 0.002
+                    },
+                    "status": {
+                      "type": "string",
+                      "example": "ok"
+                    },
+                    "result": {
+                      "$ref": "#/components/schemas/SearchMatrixOffsetsResponse"
                     }
                   }
                 }
@@ -5465,6 +5967,22 @@
               "$ref": "#/components/schemas/CollectionDescription"
             }
           }
+        },
+        "example": {
+          "collections": [
+            {
+              "name": "arivx-title"
+            },
+            {
+              "name": "arivx-abstract"
+            },
+            {
+              "name": "medium-title"
+            },
+            {
+              "name": "medium-text"
+            }
+          ]
         }
       },
       "CollectionDescription": {
@@ -6182,18 +6700,145 @@
           "geo",
           "text",
           "bool",
-          "datetime"
+          "datetime",
+          "uuid"
         ]
       },
       "PayloadSchemaParams": {
         "description": "Payload type with parameters",
         "anyOf": [
           {
-            "$ref": "#/components/schemas/TextIndexParams"
+            "$ref": "#/components/schemas/KeywordIndexParams"
           },
           {
             "$ref": "#/components/schemas/IntegerIndexParams"
+          },
+          {
+            "$ref": "#/components/schemas/FloatIndexParams"
+          },
+          {
+            "$ref": "#/components/schemas/GeoIndexParams"
+          },
+          {
+            "$ref": "#/components/schemas/TextIndexParams"
+          },
+          {
+            "$ref": "#/components/schemas/BoolIndexParams"
+          },
+          {
+            "$ref": "#/components/schemas/DatetimeIndexParams"
+          },
+          {
+            "$ref": "#/components/schemas/UuidIndexParams"
           }
+        ]
+      },
+      "KeywordIndexParams": {
+        "type": "object",
+        "required": [
+          "type"
+        ],
+        "properties": {
+          "type": {
+            "$ref": "#/components/schemas/KeywordIndexType"
+          },
+          "is_tenant": {
+            "description": "If true - used for tenant optimization. Default: false.",
+            "type": "boolean",
+            "nullable": true
+          },
+          "on_disk": {
+            "description": "If true, store the index on disk. Default: false.",
+            "type": "boolean",
+            "nullable": true
+          }
+        }
+      },
+      "KeywordIndexType": {
+        "type": "string",
+        "enum": [
+          "keyword"
+        ]
+      },
+      "IntegerIndexParams": {
+        "type": "object",
+        "required": [
+          "type"
+        ],
+        "properties": {
+          "type": {
+            "$ref": "#/components/schemas/IntegerIndexType"
+          },
+          "lookup": {
+            "description": "If true - support direct lookups.",
+            "type": "boolean",
+            "nullable": true
+          },
+          "range": {
+            "description": "If true - support ranges filters.",
+            "type": "boolean",
+            "nullable": true
+          },
+          "is_principal": {
+            "description": "If true - use this key to organize storage of the collection data. This option assumes that this key will be used in majority of filtered requests.",
+            "type": "boolean",
+            "nullable": true
+          },
+          "on_disk": {
+            "description": "If true, store the index on disk. Default: false.",
+            "type": "boolean",
+            "nullable": true
+          }
+        }
+      },
+      "IntegerIndexType": {
+        "type": "string",
+        "enum": [
+          "integer"
+        ]
+      },
+      "FloatIndexParams": {
+        "type": "object",
+        "required": [
+          "type"
+        ],
+        "properties": {
+          "type": {
+            "$ref": "#/components/schemas/FloatIndexType"
+          },
+          "is_principal": {
+            "description": "If true - use this key to organize storage of the collection data. This option assumes that this key will be used in majority of filtered requests.",
+            "type": "boolean",
+            "nullable": true
+          },
+          "on_disk": {
+            "description": "If true, store the index on disk. Default: false.",
+            "type": "boolean",
+            "nullable": true
+          }
+        }
+      },
+      "FloatIndexType": {
+        "type": "string",
+        "enum": [
+          "float"
+        ]
+      },
+      "GeoIndexParams": {
+        "type": "object",
+        "required": [
+          "type"
+        ],
+        "properties": {
+          "type": {
+            "$ref": "#/components/schemas/GeoIndexType"
+          }
+        }
+      },
+      "GeoIndexType": {
+        "type": "string",
+        "enum": [
+          "geo"
         ]
       },
       "TextIndexParams": {
@@ -6221,7 +6866,7 @@
             "nullable": true
           },
           "lowercase": {
-            "description": "If true, lowercase all tokens. Default: true",
+            "description": "If true, lowercase all tokens. Default: true.",
             "type": "boolean",
             "nullable": true
           }
@@ -6242,31 +6887,75 @@
           "multilingual"
         ]
       },
-      "IntegerIndexParams": {
+      "BoolIndexParams": {
         "type": "object",
         "required": [
-          "lookup",
-          "range",
           "type"
         ],
         "properties": {
           "type": {
-            "$ref": "#/components/schemas/IntegerIndexType"
-          },
-          "lookup": {
-            "description": "If true - support direct lookups.",
-            "type": "boolean"
-          },
-          "range": {
-            "description": "If true - support ranges filters.",
-            "type": "boolean"
+            "$ref": "#/components/schemas/BoolIndexType"
           }
         }
       },
-      "IntegerIndexType": {
+      "BoolIndexType": {
         "type": "string",
         "enum": [
-          "integer"
+          "bool"
+        ]
+      },
+      "DatetimeIndexParams": {
+        "type": "object",
+        "required": [
+          "type"
+        ],
+        "properties": {
+          "type": {
+            "$ref": "#/components/schemas/DatetimeIndexType"
+          },
+          "is_principal": {
+            "description": "If true - use this key to organize storage of the collection data. This option assumes that this key will be used in majority of filtered requests.",
+            "type": "boolean",
+            "nullable": true
+          },
+          "on_disk": {
+            "description": "If true, store the index on disk. Default: false.",
+            "type": "boolean",
+            "nullable": true
+          }
+        }
+      },
+      "DatetimeIndexType": {
+        "type": "string",
+        "enum": [
+          "datetime"
+        ]
+      },
+      "UuidIndexParams": {
+        "type": "object",
+        "required": [
+          "type"
+        ],
+        "properties": {
+          "type": {
+            "$ref": "#/components/schemas/UuidIndexType"
+          },
+          "is_tenant": {
+            "description": "If true - used for tenant optimization.",
+            "type": "boolean",
+            "nullable": true
+          },
+          "on_disk": {
+            "description": "If true, store the index on disk. Default: false.",
+            "type": "boolean",
+            "nullable": true
+          }
+        }
+      },
+      "UuidIndexType": {
+        "type": "string",
+        "enum": [
+          "uuid"
         ]
       },
       "PointRequest": {
@@ -6325,12 +7014,14 @@
       "ShardKey": {
         "anyOf": [
           {
-            "type": "string"
+            "type": "string",
+            "example": "region_1"
           },
           {
             "type": "integer",
             "format": "uint64",
-            "minimum": 0
+            "minimum": 0,
+            "example": 12
           }
         ]
       },
@@ -6340,11 +7031,13 @@
           {
             "type": "integer",
             "format": "uint64",
-            "minimum": 0
+            "minimum": 0,
+            "example": 42
           },
           {
             "type": "string",
-            "format": "uuid"
+            "format": "uuid",
+            "example": "550e8400-e29b-41d4-a716-446655440000"
           }
         ]
       },
@@ -6483,7 +7176,11 @@
       },
       "Payload": {
         "type": "object",
-        "additionalProperties": true
+        "additionalProperties": true,
+        "example": {
+          "city": "London",
+          "color": "green"
+        }
       },
       "VectorStruct": {
         "description": "Full vector data per point separator with single and multiple vector modes",
@@ -6493,7 +7190,12 @@
             "items": {
               "type": "number",
               "format": "float"
-            }
+            },
+            "example": [
+              0.875,
+              0.140625,
+              0.897599995136261
+            ]
           },
           {
             "type": "array",
@@ -6503,13 +7205,40 @@
                 "type": "number",
                 "format": "float"
               }
-            }
+            },
+            "example": [
+              [
+                0.875,
+                0.140625,
+                0.11020000278949738
+              ],
+              [
+                0.7580000162124634,
+                0.28126001358032227,
+                0.9687100052833557
+              ],
+              [
+                0.6209999918937683,
+                0.42187801003456116,
+                0.9375
+              ]
+            ]
           },
           {
             "type": "object",
             "additionalProperties": {
               "$ref": "#/components/schemas/Vector"
+            },
+            "example": {
+              "image-embeddings": [
+                0.8730000257492065,
+                0.140625,
+                0.897599995136261
+              ]
             }
+          },
+          {
+            "$ref": "#/components/schemas/Document"
           }
         ]
       },
@@ -6534,6 +7263,9 @@
                 "format": "float"
               }
             }
+          },
+          {
+            "$ref": "#/components/schemas/Document"
           }
         ]
       },
@@ -6564,15 +7296,35 @@
           }
         }
       },
+      "Document": {
+        "description": "WARN: Work-in-progress, unimplemented\n\nText document for embedding. Requires inference infrastructure, unimplemented.",
+        "type": "object",
+        "required": [
+          "text"
+        ],
+        "properties": {
+          "text": {
+            "description": "Text of the document This field will be used as input for the embedding model",
+            "type": "string"
+          },
+          "model": {
+            "description": "Name of the model used to generate the vector List of available models depends on a provider",
+            "type": "string",
+            "nullable": true
+          }
+        }
+      },
       "OrderValue": {
         "anyOf": [
           {
             "type": "integer",
-            "format": "int64"
+            "format": "int64",
+            "example": 42
           },
           {
             "type": "number",
-            "format": "double"
+            "format": "double",
+            "example": 42.5
           }
         ]
       },
@@ -7358,12 +8110,14 @@
             "description": "Point version",
             "type": "integer",
             "format": "uint64",
-            "minimum": 0
+            "minimum": 0,
+            "example": 3
           },
           "score": {
             "description": "Points vector distance to the query vector",
             "type": "number",
-            "format": "float"
+            "format": "float",
+            "example": 0.75
           },
           "payload": {
             "description": "Payload - values assigned to the point",
@@ -7784,7 +8538,35 @@
             "type": "array",
             "items": {
               "$ref": "#/components/schemas/Record"
-            }
+            },
+            "example": [
+              {
+                "id": 40,
+                "payload": {
+                  "city": "London",
+                  "color": "green"
+                },
+                "vector": [
+                  0.875,
+                  0.140625,
+                  0.897599995136261
+                ],
+                "shard_key": "region_1"
+              },
+              {
+                "id": 41,
+                "payload": {
+                  "city": "Paris",
+                  "color": "red"
+                },
+                "vector": [
+                  0.75,
+                  0.640625,
+                  0.8945000171661377
+                ],
+                "shard_key": "region_1"
+              }
+            ]
           },
           "next_page_offset": {
             "description": "Offset which should be used to retrieve a next page result",
@@ -7807,7 +8589,7 @@
             "$ref": "#/components/schemas/VectorsConfig"
           },
           "shard_number": {
-            "description": "For auto sharding: Number of shards in collection. - Default is 1 for standalone, otherwise equal to the number of nodes - Minimum is 1 For custom sharding: Number of shards in collection per shard group. - Default is 1, meaning that each shard key will be mapped to a single shard - Minimum is 1",
+            "description": "For auto sharding: Number of shards in collection. - Default is 1 for standalone, otherwise equal to the number of nodes - Minimum is 1\n\nFor custom sharding: Number of shards in collection per shard group. - Default is 1, meaning that each shard key will be mapped to a single shard - Minimum is 1",
             "default": null,
             "type": "integer",
             "format": "uint32",
@@ -8468,6 +9250,12 @@
                 "$ref": "#/components/schemas/Vector"
               }
             }
+          },
+          {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/Document"
+            }
           }
         ]
       },
@@ -8855,6 +9643,12 @@
             "type": "string",
             "nullable": true
           }
+        },
+        "example": {
+          "name": "my-collection-3766212330831337-2024-07-22-08-31-55.snapshot",
+          "creation_time": "2022-08-04T10:49:10",
+          "size": 1000000,
+          "checksum": "a1b2c3d4e5f6a7b8c9d0e1f2a3b4c5d6e7f8a9b0c1d2e3f4a5b6c7d8e9f0"
         }
       },
       "CountRequest": {
@@ -8911,6 +9705,7 @@
           "local_shards",
           "peer_id",
           "remote_shards",
+          "resharding_operations",
           "shard_count",
           "shard_transfers"
         ],
@@ -8946,6 +9741,13 @@
             "type": "array",
             "items": {
               "$ref": "#/components/schemas/ShardTransferInfo"
+            }
+          },
+          "resharding_operations": {
+            "description": "Resharding operations",
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/ReshardingInfo"
             }
           }
         }
@@ -9104,6 +9906,63 @@
             "type": "string",
             "enum": [
               "wal_delta"
+            ]
+          }
+        ]
+      },
+      "ReshardingInfo": {
+        "type": "object",
+        "required": [
+          "direction",
+          "peer_id",
+          "shard_id"
+        ],
+        "properties": {
+          "direction": {
+            "$ref": "#/components/schemas/ReshardingDirection"
+          },
+          "shard_id": {
+            "type": "integer",
+            "format": "uint32",
+            "minimum": 0
+          },
+          "peer_id": {
+            "type": "integer",
+            "format": "uint64",
+            "minimum": 0
+          },
+          "shard_key": {
+            "anyOf": [
+              {
+                "$ref": "#/components/schemas/ShardKey"
+              },
+              {
+                "nullable": true
+              }
+            ]
+          },
+          "comment": {
+            "description": "A human-readable report of the operation progress. Available only on the source peer.",
+            "type": "string",
+            "nullable": true
+          }
+        }
+      },
+      "ReshardingDirection": {
+        "description": "Resharding direction, scale up or down in number of shards",
+        "oneOf": [
+          {
+            "description": "Scale up, add a new shard",
+            "type": "string",
+            "enum": [
+              "up"
+            ]
+          },
+          {
+            "description": "Scale down, remove a shard",
+            "type": "string",
+            "enum": [
+              "down"
             ]
           }
         ]
@@ -9279,6 +10138,7 @@
           "config",
           "id",
           "init_time_ms",
+          "resharding",
           "shards",
           "transfers"
         ],
@@ -9304,6 +10164,12 @@
             "type": "array",
             "items": {
               "$ref": "#/components/schemas/ShardTransferInfo"
+            }
+          },
+          "resharding": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/ReshardingInfo"
             }
           }
         }
@@ -9602,6 +10468,13 @@
             "type": "string",
             "enum": [
               "ChunkedMmap"
+            ]
+          },
+          {
+            "description": "Same as `ChunkedMmap`, but vectors are forced to be locked in RAM In this way we avoid cold requests to disk, but risk to run out of memory\n\nDesigned as a replacement for `Memory`, which doesn't depend on RocksDB",
+            "type": "string",
+            "enum": [
+              "InRamChunkedMmap"
             ]
           }
         ]
@@ -10056,6 +10929,13 @@
                 "nullable": true
               }
             ]
+          },
+          "peers": {
+            "type": "object",
+            "additionalProperties": {
+              "$ref": "#/components/schemas/PeerInfo"
+            },
+            "nullable": true
           }
         }
       },
@@ -10628,6 +11508,10 @@
           "collection_name": {
             "type": "string"
           }
+        },
+        "example": {
+          "alias_name": "blogs-title",
+          "collection_name": "arivx-title"
         }
       },
       "WriteOrdering": {
@@ -11711,6 +12595,9 @@
           },
           {
             "$ref": "#/components/schemas/ExtendedPointId"
+          },
+          {
+            "$ref": "#/components/schemas/Document"
           }
         ]
       },
@@ -11733,6 +12620,9 @@
           },
           {
             "$ref": "#/components/schemas/FusionQuery"
+          },
+          {
+            "$ref": "#/components/schemas/SampleQuery"
           }
         ]
       },
@@ -11895,10 +12785,28 @@
         }
       },
       "Fusion": {
-        "description": "Fusion algorithm allows to combine results of multiple prefetches. Available fusion algorithms: * `rrf` - Rank Reciprocal Fusion",
+        "description": "Fusion algorithm allows to combine results of multiple prefetches.\n\nAvailable fusion algorithms:\n\n* `rrf` - Reciprocal Rank Fusion * `dbsf` - Distribution-Based Score Fusion",
         "type": "string",
         "enum": [
-          "rrf"
+          "rrf",
+          "dbsf"
+        ]
+      },
+      "SampleQuery": {
+        "type": "object",
+        "required": [
+          "sample"
+        ],
+        "properties": {
+          "sample": {
+            "$ref": "#/components/schemas/Sample"
+          }
+        }
+      },
+      "Sample": {
+        "type": "string",
+        "enum": [
+          "random"
         ]
       },
       "QueryRequestBatch": {
@@ -11928,6 +12836,365 @@
             }
           }
         }
+      },
+      "QueryGroupsRequest": {
+        "type": "object",
+        "required": [
+          "group_by"
+        ],
+        "properties": {
+          "shard_key": {
+            "anyOf": [
+              {
+                "$ref": "#/components/schemas/ShardKeySelector"
+              },
+              {
+                "nullable": true
+              }
+            ]
+          },
+          "prefetch": {
+            "description": "Sub-requests to perform first. If present, the query will be performed on the results of the prefetch(es).",
+            "default": null,
+            "anyOf": [
+              {
+                "$ref": "#/components/schemas/Prefetch"
+              },
+              {
+                "type": "array",
+                "items": {
+                  "$ref": "#/components/schemas/Prefetch"
+                }
+              },
+              {
+                "nullable": true
+              }
+            ]
+          },
+          "query": {
+            "description": "Query to perform. If missing without prefetches, returns points ordered by their IDs.",
+            "anyOf": [
+              {
+                "$ref": "#/components/schemas/QueryInterface"
+              },
+              {
+                "nullable": true
+              }
+            ]
+          },
+          "using": {
+            "description": "Define which vector name to use for querying. If missing, the default vector is used.",
+            "type": "string",
+            "nullable": true
+          },
+          "filter": {
+            "description": "Filter conditions - return only those points that satisfy the specified conditions.",
+            "anyOf": [
+              {
+                "$ref": "#/components/schemas/Filter"
+              },
+              {
+                "nullable": true
+              }
+            ]
+          },
+          "params": {
+            "description": "Search params for when there is no prefetch",
+            "anyOf": [
+              {
+                "$ref": "#/components/schemas/SearchParams"
+              },
+              {
+                "nullable": true
+              }
+            ]
+          },
+          "score_threshold": {
+            "description": "Return points with scores better than this threshold.",
+            "type": "number",
+            "format": "float",
+            "nullable": true
+          },
+          "with_vector": {
+            "description": "Options for specifying which vectors to include into the response. Default is false.",
+            "anyOf": [
+              {
+                "$ref": "#/components/schemas/WithVector"
+              },
+              {
+                "nullable": true
+              }
+            ]
+          },
+          "with_payload": {
+            "description": "Options for specifying which payload to include or not. Default is false.",
+            "anyOf": [
+              {
+                "$ref": "#/components/schemas/WithPayloadInterface"
+              },
+              {
+                "nullable": true
+              }
+            ]
+          },
+          "lookup_from": {
+            "description": "The location to use for IDs lookup, if not specified - use the current collection and the 'using' vector Note: the other collection vectors should have the same vector size as the 'using' vector in the current collection",
+            "default": null,
+            "anyOf": [
+              {
+                "$ref": "#/components/schemas/LookupLocation"
+              },
+              {
+                "nullable": true
+              }
+            ]
+          },
+          "group_by": {
+            "description": "Payload field to group by, must be a string or number field. If the field contains more than 1 value, all values will be used for grouping. One point can be in multiple groups.",
+            "type": "string",
+            "minLength": 1
+          },
+          "group_size": {
+            "description": "Maximum amount of points to return per group. Default is 3.",
+            "type": "integer",
+            "format": "uint",
+            "minimum": 1,
+            "nullable": true
+          },
+          "limit": {
+            "description": "Maximum amount of groups to return. Default is 10.",
+            "type": "integer",
+            "format": "uint",
+            "minimum": 1,
+            "nullable": true
+          },
+          "with_lookup": {
+            "description": "Look for points in another collection using the group ids",
+            "anyOf": [
+              {
+                "$ref": "#/components/schemas/WithLookupInterface"
+              },
+              {
+                "nullable": true
+              }
+            ]
+          }
+        }
+      },
+      "SearchMatrixRequest": {
+        "type": "object",
+        "required": [
+          "limit",
+          "sample"
+        ],
+        "properties": {
+          "shard_key": {
+            "description": "Specify in which shards to look for the points, if not specified - look in all shards",
+            "anyOf": [
+              {
+                "$ref": "#/components/schemas/ShardKeySelector"
+              },
+              {
+                "nullable": true
+              }
+            ]
+          },
+          "filter": {
+            "description": "Look only for points which satisfies this conditions",
+            "anyOf": [
+              {
+                "$ref": "#/components/schemas/Filter"
+              },
+              {
+                "nullable": true
+              }
+            ]
+          },
+          "sample": {
+            "description": "How many points to select and search within.",
+            "type": "integer",
+            "format": "uint",
+            "minimum": 2
+          },
+          "limit": {
+            "description": "How many neighbours per sample to find",
+            "type": "integer",
+            "format": "uint",
+            "minimum": 1
+          },
+          "using": {
+            "description": "Define which vector name to use for querying. If missing, the default vector is used.",
+            "type": "string",
+            "nullable": true
+          }
+        }
+      },
+      "SearchMatrixOffsetsResponse": {
+        "type": "object",
+        "required": [
+          "ids",
+          "offsets_col",
+          "offsets_row",
+          "scores"
+        ],
+        "properties": {
+          "offsets_row": {
+            "description": "Row coordinates of the CRS matrix",
+            "type": "array",
+            "items": {
+              "type": "integer",
+              "format": "uint64",
+              "minimum": 0
+            }
+          },
+          "offsets_col": {
+            "description": "Column coordinates ids of the matrix",
+            "type": "array",
+            "items": {
+              "type": "integer",
+              "format": "uint64",
+              "minimum": 0
+            }
+          },
+          "scores": {
+            "description": "Scores associate with coordinates",
+            "type": "array",
+            "items": {
+              "type": "number",
+              "format": "float"
+            }
+          },
+          "ids": {
+            "description": "Ids of the points in order",
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/ExtendedPointId"
+            }
+          }
+        }
+      },
+      "SearchMatrixPairsResponse": {
+        "type": "object",
+        "required": [
+          "pairs"
+        ],
+        "properties": {
+          "pairs": {
+            "description": "List of pairs of points with scores",
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/SearchMatrixPair"
+            }
+          }
+        }
+      },
+      "SearchMatrixPair": {
+        "description": "Pair of points (a, b) with score",
+        "type": "object",
+        "required": [
+          "a",
+          "b",
+          "score"
+        ],
+        "properties": {
+          "a": {
+            "$ref": "#/components/schemas/ExtendedPointId"
+          },
+          "b": {
+            "$ref": "#/components/schemas/ExtendedPointId"
+          },
+          "score": {
+            "type": "number",
+            "format": "float"
+          }
+        }
+      },
+      "FacetRequest": {
+        "type": "object",
+        "required": [
+          "key"
+        ],
+        "properties": {
+          "shard_key": {
+            "anyOf": [
+              {
+                "$ref": "#/components/schemas/ShardKeySelector"
+              },
+              {
+                "nullable": true
+              }
+            ]
+          },
+          "key": {
+            "description": "Payload key to use for faceting.",
+            "type": "string"
+          },
+          "limit": {
+            "description": "Max number of hits to return. Default is 10.",
+            "type": "integer",
+            "format": "uint",
+            "minimum": 1,
+            "nullable": true
+          },
+          "filter": {
+            "description": "Filter conditions - only consider points that satisfy these conditions.",
+            "anyOf": [
+              {
+                "$ref": "#/components/schemas/Filter"
+              },
+              {
+                "nullable": true
+              }
+            ]
+          },
+          "exact": {
+            "description": "Whether to do a more expensive exact count for each of the values in the facet. Default is false.",
+            "type": "boolean",
+            "nullable": true
+          }
+        }
+      },
+      "FacetResponse": {
+        "type": "object",
+        "required": [
+          "hits"
+        ],
+        "properties": {
+          "hits": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/FacetValueHit"
+            }
+          }
+        }
+      },
+      "FacetValueHit": {
+        "type": "object",
+        "required": [
+          "count",
+          "value"
+        ],
+        "properties": {
+          "value": {
+            "$ref": "#/components/schemas/FacetValue"
+          },
+          "count": {
+            "type": "integer",
+            "format": "uint",
+            "minimum": 0
+          }
+        }
+      },
+      "FacetValue": {
+        "anyOf": [
+          {
+            "type": "string"
+          },
+          {
+            "type": "integer",
+            "format": "int64"
+          }
+        ]
       }
     }
   }

@@ -9,7 +9,7 @@ use std::time::SystemTimeError;
 use api::grpc::transport_channel_pool::RequestError;
 use api::rest::{
     BaseGroupRequest, LookupLocation, OrderByInterface, RecommendStrategy,
-    SearchGroupsRequestInternal, SearchRequestInternal, ShardKeySelector,
+    SearchGroupsRequestInternal, SearchRequestInternal, ShardKeySelector, VectorStruct,
 };
 use common::defaults;
 use common::types::ScoreType;
@@ -21,7 +21,7 @@ use schemars::JsonSchema;
 use segment::common::anonymize::Anonymize;
 use segment::common::operation_error::OperationError;
 use segment::data_types::groups::GroupId;
-use segment::data_types::order_by::OrderValue;
+use segment::data_types::order_by::{OrderBy, OrderValue};
 use segment::data_types::vectors::{
     DenseVector, QueryVector, VectorRef, VectorStructInternal, DEFAULT_VECTOR_NAME,
 };
@@ -33,7 +33,7 @@ use segment::types::{
 use semver::Version;
 use serde;
 use serde::{Deserialize, Serialize};
-use serde_json::Error as JsonError;
+use serde_json::{Error as JsonError, Map, Value};
 use sparse::common::sparse_vector::SparseVector;
 use thiserror::Error;
 use tokio::sync::mpsc::error::SendError;
@@ -45,8 +45,10 @@ use validator::{Validate, ValidationError, ValidationErrors};
 use super::config_diff::{self};
 use super::ClockTag;
 use crate::config::{CollectionConfig, CollectionParams};
+use crate::operations::cluster_ops::ReshardingDirection;
 use crate::operations::config_diff::{HnswConfigDiff, QuantizationConfigDiff};
 use crate::operations::query_enum::QueryEnum;
+use crate::operations::universal_query::shard_query::{ScoringQuery, ShardQueryRequest};
 use crate::save_on_disk;
 use crate::shards::replica_set::ReplicaState;
 use crate::shards::shard::{PeerId, ShardId};
@@ -203,6 +205,10 @@ pub struct CollectionClusterInfo {
     pub remote_shards: Vec<RemoteShardInfo>,
     /// Shard transfers
     pub shard_transfers: Vec<ShardTransferInfo>,
+    /// Resharding operations
+    // TODO(resharding): remove this skip when releasing resharding
+    #[serde(skip_serializing_if = "Vec::is_empty")]
+    pub resharding_operations: Vec<ReshardingInfo>,
 }
 
 #[derive(Debug, Serialize, JsonSchema, Clone)]
@@ -227,6 +233,21 @@ pub struct ShardTransferInfo {
     pub method: Option<ShardTransferMethod>,
 
     /// A human-readable report of the transfer progress. Available only on the source peer.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub comment: Option<String>,
+}
+
+#[derive(Debug, Serialize, JsonSchema, Clone)]
+pub struct ReshardingInfo {
+    pub direction: ReshardingDirection,
+
+    pub shard_id: ShardId,
+
+    pub peer_id: PeerId,
+
+    pub shard_key: Option<ShardKey>,
+
+    /// A human-readable report of the operation progress. Available only on the source peer.
     #[serde(skip_serializing_if = "Option::is_none")]
     pub comment: Option<String>,
 }
@@ -261,7 +282,7 @@ pub struct RemoteShardInfo {
 
 /// `Acknowledged` - Request is saved to WAL and will be process in a queue.
 /// `Completed` - Request is completed, changes are actual.
-#[derive(Debug, Serialize, JsonSchema, PartialEq, Eq)]
+#[derive(Copy, Clone, Debug, Eq, PartialEq, Serialize, JsonSchema)]
 #[serde(rename_all = "snake_case")]
 pub enum UpdateStatus {
     Acknowledged,
@@ -271,7 +292,7 @@ pub enum UpdateStatus {
     ClockRejected,
 }
 
-#[derive(Debug, Serialize, JsonSchema)]
+#[derive(Copy, Clone, Debug, Serialize, JsonSchema)]
 #[serde(rename_all = "snake_case")]
 pub struct UpdateResult {
     /// Sequential number of the operation
@@ -291,7 +312,7 @@ pub struct UpdateResult {
 #[serde(rename_all = "snake_case")]
 pub struct ScrollRequest {
     #[serde(flatten)]
-    #[validate]
+    #[validate(nested)]
     pub scroll_request: ScrollRequestInternal,
     /// Specify in which shards to look for the points, if not specified - look in all shards
     #[serde(default, skip_serializing_if = "Option::is_none")]
@@ -310,7 +331,7 @@ pub struct ScrollRequestInternal {
     pub limit: Option<usize>,
 
     /// Look only for points which satisfies this conditions. If not provided - all points.
-    #[validate]
+    #[validate(nested)]
     pub filter: Option<Filter>,
 
     /// Select which payload to return with the response. Default is true.
@@ -324,13 +345,17 @@ pub struct ScrollRequestInternal {
     pub order_by: Option<OrderByInterface>,
 }
 
+#[derive(Debug, Clone, PartialEq, Default)]
+pub enum ScrollOrder {
+    #[default]
+    ById,
+    ByField(OrderBy),
+    Random,
+}
+
 /// Scroll request, used as a part of query request
 #[derive(Debug, Clone, PartialEq)]
 pub struct QueryScrollRequestInternal {
-    /// Number of points to skip from the beginning of the result list
-    /// Warning: this is different from the offset in the regular scroll request
-    pub offset: usize,
-
     /// Page size. Default: 10
     pub limit: usize,
 
@@ -344,7 +369,7 @@ pub struct QueryScrollRequestInternal {
     pub with_vector: WithVector,
 
     /// Order the records by a payload field.
-    pub order_by: Option<OrderByInterface>,
+    pub scroll_order: ScrollOrder,
 }
 
 impl ScrollRequestInternal {
@@ -374,11 +399,39 @@ impl Default for ScrollRequestInternal {
     }
 }
 
+fn points_example() -> Vec<api::rest::Record> {
+    let mut payload_map_1 = Map::new();
+    payload_map_1.insert("city".to_string(), Value::String("London".to_string()));
+    payload_map_1.insert("color".to_string(), Value::String("green".to_string()));
+
+    let mut payload_map_2 = Map::new();
+    payload_map_2.insert("city".to_string(), Value::String("Paris".to_string()));
+    payload_map_2.insert("color".to_string(), Value::String("red".to_string()));
+
+    vec![
+        api::rest::Record {
+            id: PointIdType::NumId(40),
+            payload: Some(Payload(payload_map_1)),
+            vector: Some(VectorStruct::Single(vec![0.875, 0.140625, 0.897_6])),
+            shard_key: Some("region_1".into()),
+            order_value: None,
+        },
+        api::rest::Record {
+            id: PointIdType::NumId(41),
+            payload: Some(Payload(payload_map_2)),
+            vector: Some(VectorStruct::Single(vec![0.75, 0.640625, 0.8945])),
+            shard_key: Some("region_1".into()),
+            order_value: None,
+        },
+    ]
+}
+
 /// Result of the points read request
 #[derive(Debug, Serialize, JsonSchema)]
 #[serde(rename_all = "snake_case")]
 pub struct ScrollResult {
     /// List of retrieved points
+    #[schemars(example = "points_example")]
     pub points: Vec<api::rest::Record>,
     /// Offset which should be used to retrieve a next page result
     pub next_page_offset: Option<PointIdType>,
@@ -388,7 +441,7 @@ pub struct ScrollResult {
 #[serde(rename_all = "snake_case")]
 pub struct SearchRequest {
     #[serde(flatten)]
-    #[validate]
+    #[validate(nested)]
     pub search_request: SearchRequestInternal,
     /// Specify in which shards to look for the points, if not specified - look in all shards
     #[serde(default, skip_serializing_if = "Option::is_none")]
@@ -398,7 +451,7 @@ pub struct SearchRequest {
 #[derive(Debug, Deserialize, Serialize, JsonSchema, Validate, Clone)]
 #[serde(rename_all = "snake_case")]
 pub struct SearchRequestBatch {
-    #[validate]
+    #[validate(nested)]
     pub searches: Vec<SearchRequest>,
 }
 
@@ -431,7 +484,7 @@ pub struct CoreSearchRequestBatch {
 #[derive(Debug, Deserialize, Serialize, JsonSchema, Validate, Clone)]
 pub struct SearchGroupsRequest {
     #[serde(flatten)]
-    #[validate]
+    #[validate(nested)]
     pub search_group_request: SearchGroupsRequestInternal,
     /// Specify in which shards to look for the points, if not specified - look in all shards
     #[serde(default, skip_serializing_if = "Option::is_none")]
@@ -441,7 +494,7 @@ pub struct SearchGroupsRequest {
 #[derive(Debug, Deserialize, Serialize, JsonSchema, Validate)]
 pub struct PointRequest {
     #[serde(flatten)]
-    #[validate]
+    #[validate(nested)]
     pub point_request: PointRequestInternal,
     /// Specify in which shards to look for the points, if not specified - look in all shards
     #[serde(default, skip_serializing_if = "Option::is_none")]
@@ -499,6 +552,14 @@ pub enum UsingVector {
     Name(String),
 }
 
+impl UsingVector {
+    pub fn as_string(&self) -> String {
+        match self {
+            UsingVector::Name(name) => name.to_string(),
+        }
+    }
+}
+
 impl From<String> for UsingVector {
     fn from(name: String) -> Self {
         UsingVector::Name(name)
@@ -509,7 +570,7 @@ impl From<String> for UsingVector {
 #[serde(rename_all = "snake_case")]
 pub struct RecommendRequest {
     #[serde(flatten)]
-    #[validate]
+    #[validate(nested)]
     pub recommend_request: RecommendRequestInternal,
     /// Specify in which shards to look for the points, if not specified - look in all shards
     #[serde(default, skip_serializing_if = "Option::is_none")]
@@ -528,23 +589,23 @@ pub struct RecommendRequest {
 pub struct RecommendRequestInternal {
     /// Look for vectors closest to those
     #[serde(default)]
-    #[validate]
+    #[validate(nested)]
     pub positive: Vec<RecommendExample>,
 
     /// Try to avoid vectors like this
     #[serde(default)]
-    #[validate]
+    #[validate(nested)]
     pub negative: Vec<RecommendExample>,
 
     /// How to use positive and negative examples to find the results
     pub strategy: Option<api::rest::RecommendStrategy>,
 
     /// Look only for points which satisfies this conditions
-    #[validate]
+    #[validate(nested)]
     pub filter: Option<Filter>,
 
     /// Additional search params
-    #[validate]
+    #[validate(nested)]
     pub params: Option<SearchParams>,
 
     /// Max number of result to return
@@ -583,7 +644,7 @@ pub struct RecommendRequestInternal {
 #[derive(Debug, Deserialize, Serialize, JsonSchema, Validate)]
 #[serde(rename_all = "snake_case")]
 pub struct RecommendRequestBatch {
-    #[validate]
+    #[validate(nested)]
     pub searches: Vec<RecommendRequest>,
 }
 
@@ -591,7 +652,7 @@ pub struct RecommendRequestBatch {
 #[serde(rename_all = "snake_case")]
 pub struct RecommendGroupsRequest {
     #[serde(flatten)]
-    #[validate]
+    #[validate(nested)]
     pub recommend_group_request: RecommendGroupsRequestInternal,
     /// Specify in which shards to look for the points, if not specified - look in all shards
     #[serde(default, skip_serializing_if = "Option::is_none")]
@@ -613,11 +674,11 @@ pub struct RecommendGroupsRequestInternal {
     pub strategy: Option<RecommendStrategy>,
 
     /// Look only for points which satisfies this conditions
-    #[validate]
+    #[validate(nested)]
     pub filter: Option<Filter>,
 
     /// Additional search params
-    #[validate]
+    #[validate(nested)]
     pub params: Option<SearchParams>,
 
     /// Select which payload to return with the response. Default is false.
@@ -648,9 +709,9 @@ pub struct RecommendGroupsRequestInternal {
 
 #[derive(Debug, Deserialize, Serialize, JsonSchema, Validate, Clone, PartialEq)]
 pub struct ContextExamplePair {
-    #[validate]
+    #[validate(nested)]
     pub positive: RecommendExample,
-    #[validate]
+    #[validate(nested)]
     pub negative: RecommendExample,
 }
 
@@ -663,7 +724,7 @@ impl ContextExamplePair {
 #[derive(Debug, Deserialize, Serialize, JsonSchema, Validate, Clone)]
 pub struct DiscoverRequest {
     #[serde(flatten)]
-    #[validate]
+    #[validate(nested)]
     pub discover_request: DiscoverRequestInternal,
     /// Specify in which shards to look for the points, if not specified - look in all shards
     #[serde(default, skip_serializing_if = "Option::is_none")]
@@ -678,7 +739,7 @@ pub struct DiscoverRequestInternal {
     /// When using the target (with or without context), the integer part of the score represents
     /// the rank with respect to the context, while the decimal part of the score relates to the
     /// distance to the target.
-    #[validate]
+    #[validate(nested)]
     pub target: Option<RecommendExample>,
 
     /// Pairs of { positive, negative } examples to constrain the search.
@@ -694,15 +755,15 @@ pub struct DiscoverRequestInternal {
     /// For discovery search (when including a target), the context part of the score for each pair
     /// is calculated +1 if the point is closer to a positive than to a negative part of a pair,
     /// and -1 otherwise.
-    #[validate]
+    #[validate(nested)]
     pub context: Option<Vec<ContextExamplePair>>,
 
     /// Look only for points which satisfies this conditions
-    #[validate]
+    #[validate(nested)]
     pub filter: Option<Filter>,
 
     /// Additional search params
-    #[validate]
+    #[validate(nested)]
     pub params: Option<SearchParams>,
 
     /// Max number of result to return
@@ -733,7 +794,7 @@ pub struct DiscoverRequestInternal {
 
 #[derive(Debug, Deserialize, Serialize, JsonSchema, Validate, Clone)]
 pub struct DiscoverRequestBatch {
-    #[validate]
+    #[validate(nested)]
     pub searches: Vec<DiscoverRequest>,
 }
 
@@ -757,7 +818,7 @@ pub struct GroupsResult {
 #[serde(rename_all = "snake_case")]
 pub struct CountRequest {
     #[serde(flatten)]
-    #[validate]
+    #[validate(nested)]
     pub count_request: CountRequestInternal,
     /// Specify in which shards to look for the points, if not specified - look in all shards
     #[serde(default, skip_serializing_if = "Option::is_none")]
@@ -771,7 +832,7 @@ pub struct CountRequest {
 #[serde(rename_all = "snake_case")]
 pub struct CountRequestInternal {
     /// Look only for points which satisfies this conditions
-    #[validate]
+    #[validate(nested)]
     pub filter: Option<Filter>,
     /// If true, count exact number of points. If false, count approximate number of points faster.
     /// Approximate count might be unreliable during the indexing process. Default: true
@@ -828,6 +889,8 @@ pub enum CollectionError {
     PreConditionFailed { description: String },
     #[error("Object Store error: {what}")]
     ObjectStoreError { what: String },
+    #[error("Strict mode error: {description}")]
+    StrictMode { description: String },
 }
 
 impl CollectionError {
@@ -902,6 +965,11 @@ impl CollectionError {
         }
     }
 
+    pub fn strict_mode(error: impl Into<String>, solution: impl Into<String>) -> Self {
+        let description = format!("{}. Help: {}", error.into(), solution.into());
+        Self::StrictMode { description }
+    }
+
     /// Returns true if the error is transient and the operation can be retried.
     /// Returns false if the error is not transient and the operation should fail on all replicas.
     pub fn is_transient(&self) -> bool {
@@ -921,6 +989,7 @@ impl CollectionError {
             Self::InconsistentShardFailure { .. } => false,
             Self::ForwardProxyError { .. } => false,
             Self::ObjectStoreError { .. } => false,
+            Self::StrictMode { .. } => false,
         }
     }
 }
@@ -990,6 +1059,7 @@ impl From<OperationError> for CollectionError {
             },
             OperationError::WrongPayloadKey { description } => Self::BadInput { description },
             OperationError::MissingRangeIndexForOrderBy { .. } => Self::bad_input(format!("{err}")),
+            OperationError::MissingMapIndexForFacet { .. } => Self::bad_input(format!("{err}")),
         }
     }
 }
@@ -1170,19 +1240,6 @@ impl From<tempfile::PathPersistError> for CollectionError {
 pub type CollectionResult<T> = Result<T, CollectionError>;
 
 impl Record {
-    pub fn vector_names(&self) -> Vec<&str> {
-        match &self.vector {
-            None => vec![],
-            Some(vectors) => match vectors {
-                VectorStructInternal::Single(_) => vec![DEFAULT_VECTOR_NAME],
-                VectorStructInternal::MultiDense(_) => vec![DEFAULT_VECTOR_NAME],
-                VectorStructInternal::Named(vectors) => {
-                    vectors.keys().map(|x| x.as_str()).collect()
-                }
-            },
-        }
-    }
-
     pub fn get_vector_by_name(&self, name: &str) -> Option<VectorRef> {
         match &self.vector {
             Some(VectorStructInternal::Single(vector)) => {
@@ -1221,13 +1278,13 @@ impl From<Datatype> for VectorStorageDatatype {
 #[serde(rename_all = "snake_case")]
 pub struct VectorParams {
     /// Size of a vectors used
-    #[validate(custom = "validate_nonzerou64_range_min_1_max_65536")]
+    #[validate(custom(function = "validate_nonzerou64_range_min_1_max_65536"))]
     pub size: NonZeroU64,
     /// Type of distance function used for measuring distance between vectors
     pub distance: Distance,
     /// Custom params for HNSW index. If none - values from collection configuration are used.
     #[serde(default, skip_serializing_if = "is_hnsw_diff_empty")]
-    #[validate]
+    #[validate(nested)]
     pub hnsw_config: Option<HnswConfigDiff>,
     /// Custom params for quantization. If none - values from collection configuration are used.
     #[serde(
@@ -1235,7 +1292,7 @@ pub struct VectorParams {
         alias = "quantization",
         skip_serializing_if = "Option::is_none"
     )]
-    #[validate]
+    #[validate(nested)]
     pub quantization_config: Option<QuantizationConfig>,
     /// If true, vectors are served from disk, improving RAM usage at the cost of latency
     /// Default: false
@@ -1520,9 +1577,8 @@ fn incompatible_vectors_error<'a, 'b>(
     CollectionError::BadInput {
         description: format!(
             "Vectors configuration is not compatible: \
-             origin collection have vectors [{}], \
-             while other vectors [{}]",
-            this_vectors, other_vectors
+             origin collection have vectors [{this_vectors}], \
+             while other vectors [{other_vectors}]"
         ),
     }
 }
@@ -1531,8 +1587,7 @@ fn missing_vector_error(vector_name: &str) -> CollectionError {
     CollectionError::BadInput {
         description: format!(
             "Vectors configuration is not compatible: \
-             origin collection have vector {}, while other collection does not",
-            vector_name
+             origin collection have vector {vector_name}, while other collection does not"
         ),
     }
 }
@@ -1620,7 +1675,7 @@ impl From<&segment::types::VectorDataConfig> for VectorParamsBase {
 pub struct VectorParamsDiff {
     /// Update params for HNSW index. If empty object - it will be unset.
     #[serde(default, skip_serializing_if = "is_hnsw_diff_empty")]
-    #[validate]
+    #[validate(nested)]
     pub hnsw_config: Option<HnswConfigDiff>,
     /// Update params for quantization. If none - it is left unchanged.
     #[serde(
@@ -1628,7 +1683,7 @@ pub struct VectorParamsDiff {
         alias = "quantization",
         skip_serializing_if = "Option::is_none"
     )]
-    #[validate]
+    #[validate(nested)]
     pub quantization_config: Option<QuantizationConfigDiff>,
     /// If true, vectors are served from disk, improving RAM usage at the cost of latency
     #[serde(default, skip_serializing_if = "Option::is_none")]
@@ -1702,8 +1757,16 @@ impl Validate for SparseVectorsConfig {
     }
 }
 
+fn alias_description_example() -> AliasDescription {
+    AliasDescription {
+        alias_name: "blogs-title".to_string(),
+        collection_name: "arivx-title".to_string(),
+    }
+}
+
 #[derive(Debug, Serialize, JsonSchema)]
 #[serde(rename_all = "snake_case")]
+#[schemars(example = "alias_description_example")]
 pub struct AliasDescription {
     pub alias_name: String,
     pub collection_name: String,
@@ -1737,6 +1800,60 @@ impl From<SearchRequestInternal> for CoreSearchRequest {
             with_payload: request.with_payload,
             with_vector: request.with_vector,
             score_threshold: request.score_threshold,
+        }
+    }
+}
+
+impl From<SearchRequestInternal> for ShardQueryRequest {
+    fn from(value: SearchRequestInternal) -> Self {
+        let SearchRequestInternal {
+            vector,
+            filter,
+            score_threshold,
+            limit,
+            offset,
+            params,
+            with_vector,
+            with_payload,
+        } = value;
+
+        Self {
+            prefetches: vec![],
+            query: Some(ScoringQuery::Vector(QueryEnum::Nearest(vector.into()))),
+            filter,
+            score_threshold,
+            limit,
+            offset: offset.unwrap_or_default(),
+            params,
+            with_vector: with_vector.unwrap_or_default(),
+            with_payload: with_payload.unwrap_or_default(),
+        }
+    }
+}
+
+impl From<CoreSearchRequest> for ShardQueryRequest {
+    fn from(value: CoreSearchRequest) -> Self {
+        let CoreSearchRequest {
+            query,
+            filter,
+            score_threshold,
+            limit,
+            offset,
+            params,
+            with_vector,
+            with_payload,
+        } = value;
+
+        Self {
+            prefetches: vec![],
+            query: Some(ScoringQuery::Vector(query)),
+            filter,
+            score_threshold,
+            limit,
+            offset,
+            params,
+            with_vector: with_vector.unwrap_or_default(),
+            with_payload: with_payload.unwrap_or_default(),
         }
     }
 }

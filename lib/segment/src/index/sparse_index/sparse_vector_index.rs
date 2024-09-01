@@ -38,10 +38,10 @@ use crate::vector_storage::{
     check_deleted_condition, new_stoppable_raw_scorer, VectorStorage, VectorStorageEnum,
 };
 
-// TODO(1.10): remove this in the next minor release to expose the compressed sparse index
 /// Whether to use the new compressed format.
-pub const USE_COMPRESSED: bool = false;
+pub const USE_COMPRESSED: bool = true;
 
+#[derive(Debug)]
 pub struct SparseVectorIndex<TInvertedIndex: InvertedIndex> {
     config: SparseIndexConfig,
     id_tracker: Arc<AtomicRefCell<IdTrackerSS>>,
@@ -193,11 +193,6 @@ impl<TInvertedIndex: InvertedIndex> SparseVectorIndex<TInvertedIndex> {
         let inverted_index = TInvertedIndex::open(path)?;
         let indices_tracker = IndicesTracker::open(path)?;
         Ok((loaded_config, inverted_index, indices_tracker))
-    }
-
-    fn save_config(&self) -> OperationResult<()> {
-        let config_path = SparseIndexConfig::get_config_path(&self.path);
-        self.config.save(&config_path)
     }
 
     fn build_inverted_index(
@@ -367,7 +362,7 @@ impl<TInvertedIndex: InvertedIndex> SparseVectorIndex<TInvertedIndex> {
         filter: Option<&Filter>,
         top: usize,
         vector_query_context: &VectorQueryContext,
-    ) -> OperationResult<Vec<ScoredPointOffset>> {
+    ) -> Vec<ScoredPointOffset> {
         let vector_storage = self.vector_storage.borrow();
         let id_tracker = self.id_tracker.borrow();
         let deleted_point_bitslice = vector_query_context
@@ -398,9 +393,9 @@ impl<TInvertedIndex: InvertedIndex> SparseVectorIndex<TInvertedIndex> {
                 let matches_filter_condition = |idx: PointOffsetType| -> bool {
                     not_deleted_condition(idx) && filter_context.check(idx)
                 };
-                Ok(search_context.search(&matches_filter_condition))
+                search_context.search(&matches_filter_condition)
             }
-            None => Ok(search_context.search(&not_deleted_condition)),
+            None => search_context.search(&not_deleted_condition),
         }
     }
 
@@ -439,12 +434,12 @@ impl<TInvertedIndex: InvertedIndex> SparseVectorIndex<TInvertedIndex> {
                 } else {
                     let _timer =
                         ScopeDurationMeasurer::new(&self.searches_telemetry.filtered_sparse);
-                    self.search_sparse(&vector, Some(filter), top, vector_query_context)
+                    Ok(self.search_sparse(&vector, Some(filter), top, vector_query_context))
                 }
             }
             None => {
                 let _timer = ScopeDurationMeasurer::new(&self.searches_telemetry.unfiltered_sparse);
-                self.search_sparse(&vector, filter, top, vector_query_context)
+                Ok(self.search_sparse(&vector, filter, top, vector_query_context))
             }
         }
     }

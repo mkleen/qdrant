@@ -5,14 +5,14 @@ use collection::operations::payload_ops::{DeletePayload, SetPayload};
 use collection::operations::point_ops::{PointInsertOperations, PointsSelector, WriteOrdering};
 use collection::operations::vector_ops::{DeleteVectors, UpdateVectors};
 use schemars::JsonSchema;
-use segment::json_path::{JsonPath, JsonPathInterface};
+use segment::json_path::JsonPath;
 use serde::{Deserialize, Serialize};
 use storage::dispatcher::Dispatcher;
 use validator::Validate;
 
 use super::CollectionPath;
 use crate::actix::auth::ActixAccess;
-use crate::actix::helpers::process_response;
+use crate::actix::helpers::{self, process_response};
 use crate::common::points::{
     do_batch_update_points, do_clear_payload, do_create_index, do_delete_index, do_delete_payload,
     do_delete_points, do_delete_vectors, do_overwrite_payload, do_set_payload, do_update_vectors,
@@ -22,7 +22,6 @@ use crate::common::points::{
 #[derive(Deserialize, Validate)]
 struct FieldPath {
     #[serde(rename = "field_name")]
-    #[validate(custom = "JsonPath::validate_not_empty")]
     name: JsonPath,
 }
 
@@ -40,12 +39,11 @@ async fn upsert_points(
     params: Query<UpdateParam>,
     ActixAccess(access): ActixAccess,
 ) -> impl Responder {
-    let timing = Instant::now();
     let operation = operation.into_inner();
     let wait = params.wait.unwrap_or(false);
     let ordering = params.ordering.unwrap_or_default();
 
-    let response = do_upsert_points(
+    helpers::time(do_upsert_points(
         dispatcher.toc(&access).clone(),
         collection.into_inner().name,
         operation,
@@ -54,9 +52,8 @@ async fn upsert_points(
         wait,
         ordering,
         access,
-    )
-    .await;
-    process_response(response, timing)
+    ))
+    .await
 }
 
 #[post("/collections/{name}/points/delete")]
@@ -67,12 +64,11 @@ async fn delete_points(
     params: Query<UpdateParam>,
     ActixAccess(access): ActixAccess,
 ) -> impl Responder {
-    let timing = Instant::now();
     let operation = operation.into_inner();
     let wait = params.wait.unwrap_or(false);
     let ordering = params.ordering.unwrap_or_default();
 
-    let response = do_delete_points(
+    helpers::time(do_delete_points(
         dispatcher.toc(&access).clone(),
         collection.into_inner().name,
         operation,
@@ -81,9 +77,8 @@ async fn delete_points(
         wait,
         ordering,
         access,
-    )
-    .await;
-    process_response(response, timing)
+    ))
+    .await
 }
 
 #[put("/collections/{name}/points/vectors")]
@@ -94,12 +89,11 @@ async fn update_vectors(
     params: Query<UpdateParam>,
     ActixAccess(access): ActixAccess,
 ) -> impl Responder {
-    let timing = Instant::now();
     let operation = operation.into_inner();
     let wait = params.wait.unwrap_or(false);
     let ordering = params.ordering.unwrap_or_default();
 
-    let response = do_update_vectors(
+    helpers::time(do_update_vectors(
         dispatcher.toc(&access).clone(),
         collection.into_inner().name,
         operation,
@@ -108,9 +102,8 @@ async fn update_vectors(
         wait,
         ordering,
         access,
-    )
-    .await;
-    process_response(response, timing)
+    ))
+    .await
 }
 
 #[post("/collections/{name}/points/vectors/delete")]
@@ -148,12 +141,11 @@ async fn set_payload(
     params: Query<UpdateParam>,
     ActixAccess(access): ActixAccess,
 ) -> impl Responder {
-    let timing = Instant::now();
     let operation = operation.into_inner();
     let wait = params.wait.unwrap_or(false);
     let ordering = params.ordering.unwrap_or_default();
 
-    let response = do_set_payload(
+    helpers::time(do_set_payload(
         dispatcher.toc(&access).clone(),
         collection.into_inner().name,
         operation,
@@ -162,9 +154,8 @@ async fn set_payload(
         wait,
         ordering,
         access,
-    )
-    .await;
-    process_response(response, timing)
+    ))
+    .await
 }
 
 #[put("/collections/{name}/points/payload")]
@@ -175,12 +166,11 @@ async fn overwrite_payload(
     params: Query<UpdateParam>,
     ActixAccess(access): ActixAccess,
 ) -> impl Responder {
-    let timing = Instant::now();
     let operation = operation.into_inner();
     let wait = params.wait.unwrap_or(false);
     let ordering = params.ordering.unwrap_or_default();
 
-    let response = do_overwrite_payload(
+    helpers::time(do_overwrite_payload(
         dispatcher.toc(&access).clone(),
         collection.into_inner().name,
         operation,
@@ -189,9 +179,8 @@ async fn overwrite_payload(
         wait,
         ordering,
         access,
-    )
-    .await;
-    process_response(response, timing)
+    ))
+    .await
 }
 
 #[post("/collections/{name}/points/payload/delete")]
@@ -202,12 +191,11 @@ async fn delete_payload(
     params: Query<UpdateParam>,
     ActixAccess(access): ActixAccess,
 ) -> impl Responder {
-    let timing = Instant::now();
     let operation = operation.into_inner();
     let wait = params.wait.unwrap_or(false);
     let ordering = params.ordering.unwrap_or_default();
 
-    let response = do_delete_payload(
+    helpers::time(do_delete_payload(
         dispatcher.toc(&access).clone(),
         collection.into_inner().name,
         operation,
@@ -216,9 +204,8 @@ async fn delete_payload(
         wait,
         ordering,
         access,
-    )
-    .await;
-    process_response(response, timing)
+    ))
+    .await
 }
 
 #[post("/collections/{name}/points/payload/clear")]
@@ -229,12 +216,11 @@ async fn clear_payload(
     params: Query<UpdateParam>,
     ActixAccess(access): ActixAccess,
 ) -> impl Responder {
-    let timing = Instant::now();
     let operation = operation.into_inner();
     let wait = params.wait.unwrap_or(false);
     let ordering = params.ordering.unwrap_or_default();
 
-    let response = do_clear_payload(
+    helpers::time(do_clear_payload(
         dispatcher.toc(&access).clone(),
         collection.into_inner().name,
         operation,
@@ -243,9 +229,8 @@ async fn clear_payload(
         wait,
         ordering,
         access,
-    )
-    .await;
-    process_response(response, timing)
+    ))
+    .await
 }
 
 #[post("/collections/{name}/points/batch")]

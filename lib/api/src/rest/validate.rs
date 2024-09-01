@@ -1,9 +1,12 @@
+use std::borrow::Cow;
+
 use common::validation::validate_multi_vector;
-use validator::{Validate, ValidationError};
+use validator::{Validate, ValidationError, ValidationErrors};
 
 use super::schema::{BatchVectorStruct, Vector, VectorStruct};
 use super::{
-    ContextInput, Fusion, OrderByInterface, Query, QueryInterface, RecommendInput, VectorInput,
+    ContextInput, Fusion, OrderByInterface, Query, QueryInterface, RecommendInput, Sample,
+    VectorInput,
 };
 use crate::rest::NamedVectorStruct;
 
@@ -13,6 +16,16 @@ impl Validate for VectorStruct {
             VectorStruct::Single(_) => Ok(()),
             VectorStruct::MultiDense(v) => validate_multi_vector(v),
             VectorStruct::Named(v) => common::validation::validate_iter(v.values()),
+            VectorStruct::Document(_) => {
+                let mut errors = ValidationErrors::default();
+                let mut err = ValidationError::new("not_supported_inference");
+                err.add_param(
+                    Cow::from("message"),
+                    &"Document inference is not implemented, please use vectors instead",
+                );
+                errors.add("text", err);
+                Err(errors)
+            }
         }
     }
 }
@@ -30,6 +43,16 @@ impl Validate for BatchVectorStruct {
             BatchVectorStruct::Named(v) => {
                 common::validation::validate_iter(v.values().flat_map(|batch| batch.iter()))
             }
+            BatchVectorStruct::Document(_) => {
+                let mut errors = ValidationErrors::default();
+                let mut err = ValidationError::new("not_supported_inference");
+                err.add_param(
+                    Cow::from("message"),
+                    &"Document inference is not implemented, please use vectors instead",
+                );
+                errors.add("text", err);
+                Err(errors)
+            }
         }
     }
 }
@@ -40,6 +63,16 @@ impl Validate for Vector {
             Vector::Dense(_) => Ok(()),
             Vector::Sparse(v) => v.validate(),
             Vector::MultiDense(m) => common::validation::validate_multi_vector(m),
+            Vector::Document(_) => {
+                let mut errors = ValidationErrors::default();
+                let mut err = ValidationError::new("not_supported_inference");
+                err.add_param(
+                    Cow::from("message"),
+                    &"Document inference is not implemented, please use vectors instead",
+                );
+                errors.add("text", err);
+                Err(errors)
+            }
         }
     }
 }
@@ -72,6 +105,7 @@ impl Validate for Query {
             Query::Context(context) => context.context.validate(),
             Query::Fusion(fusion) => fusion.fusion.validate(),
             Query::OrderBy(order_by) => order_by.order_by.validate(),
+            Query::Sample(sample) => sample.sample.validate(),
         }
     }
 }
@@ -83,6 +117,16 @@ impl Validate for VectorInput {
             VectorInput::DenseVector(_dense) => Ok(()),
             VectorInput::SparseVector(sparse) => sparse.validate(),
             VectorInput::MultiDenseVector(multi) => validate_multi_vector(multi),
+            VectorInput::Document(_) => {
+                let mut errors = ValidationErrors::default();
+                let mut err = ValidationError::new("not_supported_inference");
+                err.add_param(
+                    Cow::from("message"),
+                    &"Document inference is not implemented, please use vectors instead",
+                );
+                errors.add("text", err);
+                Err(errors)
+            }
         }
     }
 }
@@ -124,7 +168,7 @@ impl Validate for ContextInput {
 impl Validate for Fusion {
     fn validate(&self) -> Result<(), validator::ValidationErrors> {
         match self {
-            Fusion::Rrf => Ok(()),
+            Fusion::Rrf | Fusion::Dbsf => Ok(()),
         }
     }
 }
@@ -134,6 +178,14 @@ impl Validate for OrderByInterface {
         match self {
             OrderByInterface::Key(_key) => Ok(()), // validated during parsing
             OrderByInterface::Struct(order_by) => order_by.validate(),
+        }
+    }
+}
+
+impl Validate for Sample {
+    fn validate(&self) -> Result<(), validator::ValidationErrors> {
+        match self {
+            Sample::Random => Ok(()),
         }
     }
 }

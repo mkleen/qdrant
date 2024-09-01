@@ -10,15 +10,15 @@ use itertools::Itertools;
 use strum::IntoEnumIterator as _;
 
 use crate::common::operation_error::OperationError;
-use crate::data_types::text_index::{TextIndexParams, TextIndexType, TokenizerType};
-use crate::json_path::{JsonPathInterface, JsonPathV2};
+use crate::data_types::index::{TextIndexParams, TextIndexType, TokenizerType};
+use crate::json_path::JsonPath;
 use crate::types::{
     AnyVariants, Condition, FieldCondition, Filter, Match, MatchValue, PayloadFieldSchema,
-    PayloadKeyType, PayloadSchemaParams, PayloadSchemaType, RangeInterface,
+    PayloadKeyType, PayloadSchemaParams, PayloadSchemaType, RangeInterface, UuidPayloadType,
 };
 #[derive(Debug)]
 pub struct UnindexedField {
-    field_name: JsonPathV2,
+    field_name: JsonPath,
     field_schemas: HashSet<PayloadFieldSchema>,
     collection_name: String,
     endpoint: Uri,
@@ -35,7 +35,7 @@ impl UnindexedField {
         *SLOW_QUERY_THRESHOLD.get_or_init(|| Duration::from_secs_f32(Self::DEFAULT_SLOW_QUERY_SECS))
     }
 
-    pub fn get_instance_id(collection_name: &str, field_name: &JsonPathV2) -> String {
+    pub fn get_instance_id(collection_name: &str, field_name: &JsonPath) -> String {
         format!("{collection_name}/{field_name}")
     }
 
@@ -51,7 +51,7 @@ impl UnindexedField {
     /// Will fail if the field condition cannot be used for inferring an appropriate schema.
     /// For example, when there is no index that can be built to improve performance.
     pub fn try_new(
-        field_name: JsonPathV2,
+        field_name: JsonPath,
         field_schemas: HashSet<PayloadFieldSchema>,
         collection_name: String,
     ) -> Result<Self, OperationError> {
@@ -62,7 +62,7 @@ impl UnindexedField {
         }
 
         let endpoint = match Uri::builder()
-            .path_and_query(format!("/collections/{}/index", collection_name).as_str())
+            .path_and_query(format!("/collections/{collection_name}/index").as_str())
             .build()
         {
             Ok(uri) => uri,
@@ -91,7 +91,7 @@ impl UnindexedField {
         collection_name: String,
     ) {
         let unindexed_issues =
-            Extractor::new(filter, payload_schema, collection_name).into_issues();
+            IssueExtractor::new(filter, payload_schema, collection_name).into_issues();
 
         log::trace!("Found unindexed issues: {unindexed_issues:#?}");
 
@@ -112,7 +112,7 @@ impl Issue for UnindexedField {
 
     fn description(&self) -> String {
         format!(
-            "Unindexed field '{}' is slowing queries down in collection '{}'",
+            "Unindexed field '{}' might be slowing queries down in collection '{}'",
             self.field_name, self.collection_name
         )
     }
@@ -160,27 +160,46 @@ fn all_indexes() -> impl Iterator<Item = PayloadFieldSchema> {
     PayloadSchemaType::iter().map(PayloadFieldSchema::FieldType)
 }
 
-fn infer_schema_from_match_value(value: &MatchValue) -> PayloadFieldSchema {
+fn infer_schema_from_match_value(value: &MatchValue) -> Vec<PayloadFieldSchema> {
     match &value.value {
-        crate::types::ValueVariants::Keyword(_string) => {
-            PayloadFieldSchema::FieldType(PayloadSchemaType::Keyword)
+        crate::types::ValueVariants::String(string) => {
+            let mut inferred = Vec::new();
+
+            if UuidPayloadType::parse_str(string).is_ok() {
+                inferred.push(PayloadFieldSchema::FieldType(PayloadSchemaType::Uuid))
+            }
+
+            inferred.push(PayloadFieldSchema::FieldType(PayloadSchemaType::Keyword));
+
+            inferred
         }
         crate::types::ValueVariants::Integer(_integer) => {
-            PayloadFieldSchema::FieldType(PayloadSchemaType::Integer)
+            vec![PayloadFieldSchema::FieldType(PayloadSchemaType::Integer)]
         }
         crate::types::ValueVariants::Bool(_boolean) => {
-            PayloadFieldSchema::FieldType(PayloadSchemaType::Bool)
+            vec![PayloadFieldSchema::FieldType(PayloadSchemaType::Bool)]
         }
     }
 }
 
-fn infer_schema_from_any_variants(value: &AnyVariants) -> PayloadFieldSchema {
+fn infer_schema_from_any_variants(value: &AnyVariants) -> Vec<PayloadFieldSchema> {
     match value {
-        AnyVariants::Keywords(_strings) => {
-            PayloadFieldSchema::FieldType(PayloadSchemaType::Keyword)
+        AnyVariants::Strings(strings) => {
+            let mut inferred = Vec::new();
+
+            if strings
+                .iter()
+                .all(|s| UuidPayloadType::parse_str(s).is_ok())
+            {
+                inferred.push(PayloadFieldSchema::FieldType(PayloadSchemaType::Uuid))
+            }
+
+            inferred.push(PayloadFieldSchema::FieldType(PayloadSchemaType::Keyword));
+
+            inferred
         }
         AnyVariants::Integers(_integers) => {
-            PayloadFieldSchema::FieldType(PayloadSchemaType::Integer)
+            vec![PayloadFieldSchema::FieldType(PayloadSchemaType::Integer)]
         }
     }
 }
@@ -199,16 +218,18 @@ fn infer_schema_from_field_condition(field_condition: &FieldCondition) -> Vec<Pa
     let mut inferred = Vec::new();
 
     if let Some(r#match) = r#match {
-        inferred.push(match r#match {
+        inferred.extend(match r#match {
             Match::Value(match_value) => infer_schema_from_match_value(match_value),
             Match::Text(_match_text) => {
-                PayloadFieldSchema::FieldParams(PayloadSchemaParams::Text(TextIndexParams {
-                    r#type: TextIndexType::Text,
-                    tokenizer: TokenizerType::default(),
-                    min_token_len: None,
-                    max_token_len: None,
-                    lowercase: None,
-                }))
+                vec![PayloadFieldSchema::FieldParams(PayloadSchemaParams::Text(
+                    TextIndexParams {
+                        r#type: TextIndexType::Text,
+                        tokenizer: TokenizerType::default(),
+                        min_token_len: None,
+                        max_token_len: None,
+                        lowercase: None,
+                    },
+                ))]
             }
             Match::Any(match_any) => infer_schema_from_any_variants(&match_any.any),
             Match::Except(match_except) => infer_schema_from_any_variants(&match_except.except),
@@ -236,22 +257,60 @@ fn infer_schema_from_field_condition(field_condition: &FieldCondition) -> Vec<Pa
     inferred
 }
 
-struct Extractor<'a> {
-    payload_schema: &'a HashMap<PayloadKeyType, PayloadFieldSchema>,
-    unindexed_schema: HashMap<PayloadKeyType, Vec<PayloadFieldSchema>>,
+pub struct IssueExtractor<'a> {
+    extractor: Extractor<'a>,
     collection_name: String,
 }
 
-impl<'a> Extractor<'a> {
-    fn new(
+impl<'a> IssueExtractor<'a> {
+    pub fn new(
         filter: &Filter,
         payload_schema: &'a HashMap<PayloadKeyType, PayloadFieldSchema>,
         collection_name: String,
     ) -> Self {
+        let extractor = Extractor::new_eager(filter, payload_schema);
+
+        Self {
+            extractor,
+            collection_name,
+        }
+    }
+
+    fn into_issues(self) -> Vec<UnindexedField> {
+        self.extractor
+            .unindexed_schema
+            .into_iter()
+            .filter_map(|(key, field_schemas)| {
+                let field_schemas: HashSet<_> = field_schemas
+                    .iter()
+                    .map(PayloadFieldSchema::kind)
+                    .filter(|kind| {
+                        let is_advanced = matches!(kind, PayloadSchemaType::Uuid);
+                        !is_advanced
+                    })
+                    .map(PayloadFieldSchema::from)
+                    .collect();
+
+                UnindexedField::try_new(key, field_schemas, self.collection_name.clone()).ok()
+            })
+            .collect()
+    }
+}
+
+pub struct Extractor<'a> {
+    payload_schema: &'a HashMap<PayloadKeyType, PayloadFieldSchema>,
+    unindexed_schema: HashMap<PayloadKeyType, Vec<PayloadFieldSchema>>,
+}
+
+impl<'a> Extractor<'a> {
+    /// Creates an extractor and eagerly extracts all unindexed fields from the provided filter.
+    fn new_eager(
+        filter: &Filter,
+        payload_schema: &'a HashMap<PayloadKeyType, PayloadFieldSchema>,
+    ) -> Self {
         let mut extractor = Self {
             payload_schema,
             unindexed_schema: HashMap::new(),
-            collection_name,
         };
 
         extractor.update_from_filter(None, filter);
@@ -259,40 +318,37 @@ impl<'a> Extractor<'a> {
         extractor
     }
 
-    fn into_issues(self) -> Vec<UnindexedField> {
-        self.unindexed_schema
-            .into_iter()
-            .filter_map(|(key, field_schemas)| {
-                let field_schemas = HashSet::from_iter(field_schemas);
-
-                UnindexedField::try_new(key, field_schemas, self.collection_name.clone()).ok()
-            })
-            .collect()
+    /// Creates a new lazy 'Extractor'. It needs to call some update method to extract unindexed fields.
+    pub fn new(payload_schema: &'a HashMap<PayloadKeyType, PayloadFieldSchema>) -> Self {
+        Self {
+            payload_schema,
+            unindexed_schema: HashMap::new(),
+        }
     }
 
-    fn update_from_filter(&mut self, nested_prefix: Option<&JsonPathV2>, filter: &Filter) {
-        let Filter {
-            must,
-            should,
-            min_should,
-            must_not,
-        } = filter;
-
-        let min_should = min_should.as_ref().map(|min_should| &min_should.conditions);
-
-        [
-            must.as_ref(),
-            should.as_ref(),
-            min_should,
-            must_not.as_ref(),
-        ]
-        .into_iter()
-        .flatten()
-        .flatten()
-        .for_each(|condition| self.update_from_condition(nested_prefix, condition));
+    /// Current unindexed schema.
+    pub fn unindexed_schema(&self) -> &HashMap<PayloadKeyType, Vec<PayloadFieldSchema>> {
+        &self.unindexed_schema
     }
 
-    fn update_from_condition(&mut self, nested_prefix: Option<&JsonPathV2>, condition: &Condition) {
+    /// Checks the filter for unindexed fields.
+    fn update_from_filter(&mut self, nested_prefix: Option<&JsonPath>, filter: &Filter) {
+        for condition in filter.iter_conditions() {
+            self.update_from_condition(nested_prefix, condition);
+        }
+    }
+
+    /// Checks the filter for an unindexed field, stops at the first one found.
+    pub fn update_from_filter_once(&mut self, nested_prefix: Option<&JsonPath>, filter: &Filter) {
+        for condition in filter.iter_conditions() {
+            self.update_from_condition(nested_prefix, condition);
+            if !self.unindexed_schema.is_empty() {
+                break;
+            }
+        }
+    }
+
+    fn update_from_condition(&mut self, nested_prefix: Option<&JsonPath>, condition: &Condition) {
         let key;
         let inferred;
 
@@ -307,7 +363,7 @@ impl<'a> Extractor<'a> {
             }
             Condition::Nested(nested) => {
                 self.update_from_filter(
-                    Some(&JsonPathV2::extend_or_new(nested_prefix, nested.raw_key())),
+                    Some(&JsonPath::extend_or_new(nested_prefix, nested.raw_key())),
                     nested.filter(),
                 );
                 return;
@@ -323,14 +379,31 @@ impl<'a> Extractor<'a> {
             }
             // No index needed
             Condition::HasId(_) => return,
-            Condition::Resharding(_) => return,
+            Condition::CustomIdChecker(_) => return,
         };
 
-        let full_key = JsonPathV2::extend_or_new(nested_prefix, key);
+        let full_key = JsonPath::extend_or_new(nested_prefix, key);
 
         let needs_index = match self.payload_schema.get(&full_key) {
             Some(index_info) => {
-                let already_indexed = inferred.iter().any(|inferred| inferred == index_info);
+                let index_info_kind = index_info.kind();
+
+                let already_indexed = inferred
+                    .iter()
+                    // TODO(strict-mode):
+                    // Use better comparisons for parametrized indexes. An idea is to make the inferring step
+                    // also output valid parametrized indexes and compare those instead of just the kind (index type)
+                    //
+                    // The only reason why it would be needed is because integer index can be parametrized
+                    // with just lookup or just range, so it is possible to make a false negative here. E.g.
+                    //
+                    // condition: MatchValue
+                    // inferred: FieldType(Integer)
+                    // index_info: FieldParams(IntegerIndex(range))
+                    //
+                    // In this case, we would assume that the field is indexed correctly when it is not
+                    .map(PayloadFieldSchema::kind)
+                    .any(|inferred| inferred == index_info_kind);
 
                 !already_indexed
             }

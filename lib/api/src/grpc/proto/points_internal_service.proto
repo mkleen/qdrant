@@ -23,6 +23,7 @@ service PointsInternal {
   rpc Recommend (RecommendPointsInternal) returns (RecommendResponse) {}
   rpc Get (GetPointsInternal) returns (GetResponse) {}
   rpc QueryBatch (QueryBatchPointsInternal) returns (QueryBatchResponseInternal) {}
+  rpc Facet(FacetCountsInternal) returns (FacetResponseInternal) {}
 }
 
 
@@ -242,6 +243,7 @@ message QueryShardPoints {
       RawQuery vector = 1; // (re)score against a vector query
       Fusion fusion = 2; // One of the fusion methods
       OrderBy order_by = 3; // Order by a field
+      Sample sample = 4; // Sample points
     }
   }
 
@@ -285,4 +287,32 @@ message QueryResultInternal {
 message QueryBatchResponseInternal {
   repeated QueryResultInternal results = 1;
   double time = 2; // Time spent to process
+}
+
+message FacetCountsInternal {
+    string collection_name = 1;
+    string key = 2;
+    optional Filter filter = 3;
+    uint64 limit = 4;
+    bool exact = 5;
+    uint32 shard_id = 6;
+    optional uint64 timeout = 7;
+}
+
+message FacetValueInternal {
+    oneof variant {
+        string keyword_value = 1;
+        int64 integer_value = 2;
+        bytes uuid_value = 3;
+    }
+}
+
+message FacetHitInternal {
+    FacetValueInternal value = 1;
+    uint64 count = 2;
+}
+
+message FacetResponseInternal {
+    repeated FacetHitInternal hits = 1;
+    double time = 2; // Time spent to process
 }

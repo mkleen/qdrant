@@ -8,6 +8,7 @@ use rocksdb::DB;
 use super::mutable_geo_index::MutableGeoMapIndex;
 use super::GeoMapIndex;
 use crate::common::operation_error::OperationResult;
+use crate::common::rocksdb_buffered_delete_wrapper::DatabaseColumnScheduledDeleteWrapper;
 use crate::common::rocksdb_wrapper::DatabaseColumnWrapper;
 use crate::index::field_index::geo_hash::{encode_max_precision, GeoHash};
 use crate::index::field_index::immutable_point_to_values::ImmutablePointToValues;
@@ -27,12 +28,15 @@ pub struct ImmutableGeoMapIndex {
     pub points_count: usize,
     pub points_values_count: usize,
     pub max_values_per_point: usize,
-    db_wrapper: DatabaseColumnWrapper,
+    db_wrapper: DatabaseColumnScheduledDeleteWrapper,
 }
 
 impl ImmutableGeoMapIndex {
     pub fn new(db: Arc<RwLock<DB>>, store_cf_name: &str) -> Self {
-        let db_wrapper = DatabaseColumnWrapper::new(db, store_cf_name);
+        let db_wrapper = DatabaseColumnScheduledDeleteWrapper::new(DatabaseColumnWrapper::new(
+            db,
+            store_cf_name,
+        ));
         Self {
             counts_per_hash: Default::default(),
             points_map: Default::default(),
@@ -44,12 +48,22 @@ impl ImmutableGeoMapIndex {
         }
     }
 
-    pub fn db_wrapper(&self) -> &DatabaseColumnWrapper {
+    pub fn db_wrapper(&self) -> &DatabaseColumnScheduledDeleteWrapper {
         &self.db_wrapper
     }
 
-    pub fn get_values(&self, idx: PointOffsetType) -> Option<&[GeoPoint]> {
-        self.point_to_values.get_values(idx)
+    pub fn check_values_any(
+        &self,
+        idx: PointOffsetType,
+        check_fn: impl Fn(&GeoPoint) -> bool,
+    ) -> bool {
+        self.point_to_values.check_values_any(idx, check_fn)
+    }
+
+    pub fn values_count(&self, idx: PointOffsetType) -> usize {
+        self.point_to_values
+            .get_values_count(idx)
+            .unwrap_or_default()
     }
 
     pub fn get_points_per_hash(&self) -> impl Iterator<Item = (&GeoHash, usize)> {
@@ -76,8 +90,8 @@ impl ImmutableGeoMapIndex {
 
     pub fn load(&mut self) -> OperationResult<bool> {
         let mut mutable_geo_index = MutableGeoMapIndex::new(
-            self.db_wrapper.database.clone(),
-            &self.db_wrapper.column_name,
+            self.db_wrapper.get_database(),
+            self.db_wrapper.get_column_name(),
         );
         let result = mutable_geo_index.load()?;
 
@@ -193,13 +207,12 @@ impl ImmutableGeoMapIndex {
                 if values_count > 0 {
                     self.counts_per_hash[index].values = values_count - 1;
                 } else {
-                    debug_assert!(false, "Hash value count is already empty: {}", sub_geo_hash,);
+                    debug_assert!(false, "Hash value count is already empty: {sub_geo_hash}",);
                 }
             } else {
                 debug_assert!(
                     false,
-                    "Hash value count is not found for hash: {}",
-                    sub_geo_hash,
+                    "Hash value count is not found for hash: {sub_geo_hash}",
                 );
             }
         }
@@ -222,13 +235,12 @@ impl ImmutableGeoMapIndex {
                     if points_count > 0 {
                         self.counts_per_hash[index].points = points_count - 1;
                     } else {
-                        debug_assert!(false, "Hash point count is already empty: {}", sub_geo_hash,);
+                        debug_assert!(false, "Hash point count is already empty: {sub_geo_hash}",);
                     }
                 } else {
                     debug_assert!(
                         false,
-                        "Hash point count is not found for hash: {}",
-                        sub_geo_hash,
+                        "Hash point count is not found for hash: {sub_geo_hash}",
                     );
                 };
             }

@@ -62,8 +62,7 @@ impl Collection {
         match state.config.params.sharding_method.unwrap_or_default() {
             ShardingMethod::Auto => {
                 return Err(CollectionError::bad_request(format!(
-                    "Shard Key {} cannot be created with Auto sharding method",
-                    shard_key
+                    "Shard Key {shard_key} cannot be created with Auto sharding method"
                 )));
             }
             ShardingMethod::Custom => {}
@@ -71,8 +70,7 @@ impl Collection {
 
         if state.shards_key_mapping.contains_key(&shard_key) {
             return Err(CollectionError::bad_request(format!(
-                "Shard key {} already exists",
-                shard_key
+                "Shard key {shard_key} already exists"
             )));
         }
 
@@ -92,8 +90,7 @@ impl Collection {
 
         if !unknown_peers.is_empty() {
             return Err(CollectionError::bad_request(format!(
-                "Shard Key {} placement contains unknown peers: {:?}",
-                shard_key, unknown_peers
+                "Shard Key {shard_key} placement contains unknown peers: {unknown_peers:?}"
             )));
         }
 
@@ -136,11 +133,24 @@ impl Collection {
         match state.config.params.sharding_method.unwrap_or_default() {
             ShardingMethod::Auto => {
                 return Err(CollectionError::bad_request(format!(
-                    "Shard Key {} cannot be removed with Auto sharding method",
-                    shard_key
+                    "Shard Key {shard_key} cannot be removed with Auto sharding method"
                 )));
             }
             ShardingMethod::Custom => {}
+        }
+
+        let resharding_state = self
+            .resharding_state()
+            .await
+            .filter(|state| state.shard_key.as_ref() == Some(&shard_key));
+
+        if let Some(state) = resharding_state {
+            if let Err(err) = self.abort_resharding(state.key(), true).await {
+                log::error!(
+                    "failed to abort resharding {} while deleting shard key {shard_key}: {err}",
+                    state.key(),
+                );
+            }
         }
 
         self.shards_holder

@@ -2,6 +2,7 @@ use std::sync::Arc;
 use std::time::Duration;
 
 use async_trait::async_trait;
+use segment::data_types::facets::{FacetParams, FacetResponse};
 use segment::data_types::order_by::OrderBy;
 use segment::types::*;
 use tokio::runtime::Handle;
@@ -28,6 +29,7 @@ pub trait ShardOperation {
         filter: Option<&Filter>,
         search_runtime_handle: &Handle,
         order_by: Option<&OrderBy>,
+        timeout: Option<Duration>,
     ) -> CollectionResult<Vec<Record>>;
 
     async fn info(&self) -> CollectionResult<CollectionInfo>;
@@ -39,13 +41,20 @@ pub trait ShardOperation {
         timeout: Option<Duration>,
     ) -> CollectionResult<Vec<Vec<ScoredPoint>>>;
 
-    async fn count(&self, request: Arc<CountRequestInternal>) -> CollectionResult<CountResult>;
+    async fn count(
+        &self,
+        request: Arc<CountRequestInternal>,
+        search_runtime_handle: &Handle,
+        timeout: Option<Duration>,
+    ) -> CollectionResult<CountResult>;
 
     async fn retrieve(
         &self,
         request: Arc<PointRequestInternal>,
         with_payload: &WithPayload,
         with_vector: &WithVector,
+        search_runtime_handle: &Handle,
+        timeout: Option<Duration>,
     ) -> CollectionResult<Vec<Record>>;
 
     async fn query_batch(
@@ -54,6 +63,13 @@ pub trait ShardOperation {
         search_runtime_handle: &Handle,
         timeout: Option<Duration>,
     ) -> CollectionResult<Vec<ShardQueryResponse>>;
+
+    async fn facet(
+        &self,
+        request: Arc<FacetParams>,
+        search_runtime_handle: &Handle,
+        timeout: Option<Duration>,
+    ) -> CollectionResult<FacetResponse>;
 }
 
 pub type ShardOperationSS = dyn ShardOperation + Send + Sync;

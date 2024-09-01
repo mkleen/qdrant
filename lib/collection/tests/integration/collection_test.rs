@@ -178,7 +178,7 @@ async fn test_collection_search_with_payload_and_vector_with_shards(shard_number
     };
 
     let count_res = collection
-        .count(count_request, None, &ShardSelectorInternal::All)
+        .count(count_request, None, &ShardSelectorInternal::All, None)
         .await
         .unwrap();
     assert_eq!(count_res.count, 1);
@@ -249,7 +249,7 @@ async fn test_collection_loading_with_shards(shard_number: u32) {
         with_vector: true.into(),
     };
     let retrieved = loaded_collection
-        .retrieve(request, None, &ShardSelectorInternal::All)
+        .retrieve(request, None, &ShardSelectorInternal::All, None)
         .await
         .unwrap();
 
@@ -424,6 +424,7 @@ async fn test_read_api_with_shards(shard_number: u32) {
             },
             None,
             &ShardSelectorInternal::All,
+            None,
         )
         .await
         .unwrap();
@@ -535,7 +536,7 @@ async fn test_ordered_scroll_api_with_shards(shard_number: u32) {
         .unwrap();
 
     ///////// Test single-valued fields ///////////
-    for key in [PRICE_FLOAT_KEY, PRICE_INT_KEY].into_iter() {
+    for key in [PRICE_FLOAT_KEY, PRICE_INT_KEY] {
         let result_asc = collection
             .scroll_by(
                 ScrollRequestInternal {
@@ -552,6 +553,7 @@ async fn test_ordered_scroll_api_with_shards(shard_number: u32) {
                 },
                 None,
                 &ShardSelectorInternal::All,
+                None,
             )
             .await
             .unwrap();
@@ -582,6 +584,7 @@ async fn test_ordered_scroll_api_with_shards(shard_number: u32) {
                 },
                 None,
                 &ShardSelectorInternal::All,
+                None,
             )
             .await
             .unwrap();
@@ -621,6 +624,7 @@ async fn test_ordered_scroll_api_with_shards(shard_number: u32) {
                 },
                 None,
                 &ShardSelectorInternal::All,
+                None,
             )
             .await
             .unwrap();
@@ -659,6 +663,7 @@ async fn test_ordered_scroll_api_with_shards(shard_number: u32) {
                 },
                 None,
                 &ShardSelectorInternal::All,
+                None,
             )
             .await
             .unwrap();
@@ -677,9 +682,7 @@ async fn test_ordered_scroll_api_with_shards(shard_number: u32) {
         assert_eq!(desc_second_page.points.len(), 4);
         assert!(
             desc_second_page_points.is_subset(&valid_desc_second_page_points),
-            "expected: {:?}, got: {:?}",
-            valid_desc_second_page_points,
-            desc_second_page_points
+            "expected: {valid_desc_second_page_points:?}, got: {desc_second_page_points:?}"
         );
     }
 
@@ -696,6 +699,7 @@ async fn test_ordered_scroll_api_with_shards(shard_number: u32) {
             },
             None,
             &ShardSelectorInternal::All,
+            None,
         )
         .await
         .unwrap();
@@ -788,6 +792,7 @@ async fn test_collection_delete_points_by_filter_with_shards(shard_number: u32) 
             },
             None,
             &ShardSelectorInternal::All,
+            None,
         )
         .await
         .unwrap();

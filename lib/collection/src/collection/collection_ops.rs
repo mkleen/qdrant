@@ -216,6 +216,13 @@ impl Collection {
                         .await?;
                 }
             }
+
+            // We can't remove the last repilca of a shard, so this should prevent removing
+            // resharding shard, because it's always the *only* replica.
+            //
+            // And if we remove some other shard, that is currently doing resharding transfer,
+            // the transfer should be cancelled (see the block right above this comment),
+            // so no special handling is needed.
         }
         Ok(())
     }
@@ -308,7 +315,7 @@ impl Collection {
                     .copied()
                     .unwrap_or(ReplicaState::Dead);
                 let count_result = replica_set
-                    .count_local(count_request.clone())
+                    .count_local(count_request.clone(), None)
                     .await
                     .unwrap_or_default();
                 let points_count = count_result.map(|x| x.count).unwrap_or(0);
@@ -319,7 +326,7 @@ impl Collection {
                     shard_key: shard_to_key.get(&shard_id).cloned(),
                 })
             }
-            for (peer_id, state) in replica_set.peers().into_iter() {
+            for (peer_id, state) in replica_set.peers() {
                 if peer_id == replica_set.this_peer_id() {
                     continue;
                 }
@@ -333,6 +340,8 @@ impl Collection {
         }
         let shard_transfers =
             shards_holder.get_shard_transfer_info(&*self.transfer_tasks.lock().await);
+        let resharding_operations =
+            shards_holder.get_resharding_operations_info(&*self.reshard_tasks.lock().await);
 
         // sort by shard_id
         local_shards.sort_by_key(|k| k.shard_id);
@@ -344,6 +353,7 @@ impl Collection {
             local_shards,
             remote_shards,
             shard_transfers,
+            resharding_operations,
         };
         Ok(info)
     }

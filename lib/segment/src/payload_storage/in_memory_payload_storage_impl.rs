@@ -11,6 +11,11 @@ use crate::payload_storage::PayloadStorage;
 use crate::types::Payload;
 
 impl PayloadStorage for InMemoryPayloadStorage {
+    fn assign_all(&mut self, point_id: PointOffsetType, payload: &Payload) -> OperationResult<()> {
+        self.payload.insert(point_id, payload.to_owned());
+        Ok(())
+    }
+
     fn assign(&mut self, point_id: PointOffsetType, payload: &Payload) -> OperationResult<()> {
         match self.payload.get_mut(&point_id) {
             Some(point_payload) => point_payload.merge(payload),
@@ -79,7 +84,6 @@ mod tests {
     use super::*;
     use crate::common::utils::IndexesMap;
     use crate::fixtures::payload_context_fixture::FixtureIdTracker;
-    use crate::json_path::path;
     use crate::payload_storage::query_checker::check_payload;
     use crate::types::{Condition, FieldCondition, Filter, OwnedPayloadRef};
 
@@ -105,9 +109,9 @@ mod tests {
             should: None,
             min_should: None,
             must: Some(vec![
-                Condition::Field(FieldCondition::new_match(path("age"), 43.into())),
+                Condition::Field(FieldCondition::new_match(JsonPath::new("age"), 43.into())),
                 Condition::Field(FieldCondition::new_match(
-                    path("name"),
+                    JsonPath::new("name"),
                     "John Doe".to_string().into(),
                 )),
             ]),

@@ -1,7 +1,5 @@
-pub mod immutable_geo_index;
-pub mod mutable_geo_index;
-
 use std::cmp::{max, min};
+use std::path::PathBuf;
 use std::str::FromStr;
 use std::sync::Arc;
 
@@ -13,8 +11,9 @@ use serde_json::Value;
 
 use self::immutable_geo_index::ImmutableGeoMapIndex;
 use self::mutable_geo_index::MutableGeoMapIndex;
+use super::FieldIndexBuilderTrait;
 use crate::common::operation_error::{OperationError, OperationResult};
-use crate::common::rocksdb_wrapper::DatabaseColumnWrapper;
+use crate::common::rocksdb_buffered_delete_wrapper::DatabaseColumnScheduledDeleteWrapper;
 use crate::common::Flusher;
 use crate::index::field_index::geo_hash::{
     circle_hashes, common_hash_prefix, geo_hash_to_box, polygon_hashes, polygon_hashes_estimation,
@@ -25,9 +24,10 @@ use crate::index::field_index::{
     CardinalityEstimation, PayloadBlockCondition, PayloadFieldIndex, PrimaryCondition, ValueIndexer,
 };
 use crate::telemetry::PayloadIndexTelemetry;
-use crate::types::{
-    FieldCondition, GeoBoundingBox, GeoPoint, GeoRadius, PayloadKeyType, PolygonWrapper,
-};
+use crate::types::{FieldCondition, GeoPoint, PayloadKeyType};
+
+pub mod immutable_geo_index;
+pub mod mutable_geo_index;
 
 /// Max number of sub-regions computed for an input geo query
 // TODO discuss value, should it be dynamically computed?
@@ -48,7 +48,11 @@ impl GeoMapIndex {
         }
     }
 
-    fn db_wrapper(&self) -> &DatabaseColumnWrapper {
+    pub fn builder(db: Arc<RwLock<DB>>, field: &str) -> GeoMapIndexBuilder {
+        GeoMapIndexBuilder(Self::new(db, field, true))
+    }
+
+    fn db_wrapper(&self) -> &DatabaseColumnScheduledDeleteWrapper {
         match self {
             GeoMapIndex::Mutable(index) => index.db_wrapper(),
             GeoMapIndex::Immutable(index) => index.db_wrapper(),
@@ -99,10 +103,6 @@ impl GeoMapIndex {
         format!("{field}_geo")
     }
 
-    pub fn recreate(&self) -> OperationResult<()> {
-        self.db_wrapper().recreate_column_family()
-    }
-
     fn encode_db_key(value: &str, idx: PointOffsetType) -> String {
         format!("{value}/{idx}")
     }
@@ -148,29 +148,22 @@ impl GeoMapIndex {
         self.db_wrapper().flusher()
     }
 
-    pub fn get_values(&self, idx: PointOffsetType) -> Option<&[GeoPoint]> {
+    pub fn check_values_any(
+        &self,
+        idx: PointOffsetType,
+        check_fn: impl Fn(&GeoPoint) -> bool,
+    ) -> bool {
         match self {
-            GeoMapIndex::Mutable(index) => index.get_values(idx),
-            GeoMapIndex::Immutable(index) => index.get_values(idx),
+            GeoMapIndex::Mutable(index) => index.check_values_any(idx, check_fn),
+            GeoMapIndex::Immutable(index) => index.check_values_any(idx, check_fn),
         }
     }
 
-    pub fn check_radius(&self, idx: PointOffsetType, radius: &GeoRadius) -> bool {
-        self.get_values(idx)
-            .map(|values| values.iter().any(|x| radius.check_point(x)))
-            .unwrap_or(false)
-    }
-
-    pub fn check_box(&self, idx: PointOffsetType, bbox: &GeoBoundingBox) -> bool {
-        self.get_values(idx)
-            .map(|values| values.iter().any(|x| bbox.check_point(x)))
-            .unwrap_or(false)
-    }
-
-    pub fn check_polygon(&self, idx: PointOffsetType, polygon: &PolygonWrapper) -> bool {
-        self.get_values(idx)
-            .map(|values| values.iter().any(|x| polygon.check_point(x)))
-            .unwrap_or(false)
+    pub fn values_count(&self, idx: PointOffsetType) -> usize {
+        match self {
+            GeoMapIndex::Mutable(index) => index.values_count(idx),
+            GeoMapIndex::Immutable(index) => index.values_count(idx),
+        }
     }
 
     pub fn match_cardinality(&self, values: &[GeoHash]) -> CardinalityEstimation {
@@ -279,10 +272,8 @@ impl GeoMapIndex {
 
         let mut current_region = GeoHash::default();
 
-        for (region, size) in large_regions.into_iter() {
-            if current_region.starts_with(region.as_str()) {
-                continue;
-            } else {
+        for (region, size) in large_regions {
+            if !current_region.starts_with(region.as_str()) {
                 current_region = region.clone();
                 edge_region.push((region, size));
             }
@@ -291,18 +282,32 @@ impl GeoMapIndex {
         Box::new(edge_region.into_iter())
     }
 
-    pub fn values_count(&self, point_id: PointOffsetType) -> usize {
-        self.get_values(point_id).map(|x| x.len()).unwrap_or(0)
-    }
-
-    pub fn values_is_empty(&self, point_id: PointOffsetType) -> bool {
-        self.get_values(point_id)
-            .map(|x| x.is_empty())
-            .unwrap_or(true)
+    pub fn values_is_empty(&self, idx: PointOffsetType) -> bool {
+        self.values_count(idx) == 0
     }
 }
 
-impl ValueIndexer<GeoPoint> for GeoMapIndex {
+pub struct GeoMapIndexBuilder(GeoMapIndex);
+
+impl FieldIndexBuilderTrait for GeoMapIndexBuilder {
+    type FieldIndexType = GeoMapIndex;
+
+    fn init(&mut self) -> OperationResult<()> {
+        self.0.db_wrapper().recreate_column_family()
+    }
+
+    fn add_point(&mut self, id: PointOffsetType, payload: &[&Value]) -> OperationResult<()> {
+        self.0.add_point(id, payload)
+    }
+
+    fn finalize(self) -> OperationResult<Self::FieldIndexType> {
+        Ok(self.0)
+    }
+}
+
+impl ValueIndexer for GeoMapIndex {
+    type ValueType = GeoPoint;
+
     fn add_many(&mut self, id: PointOffsetType, values: Vec<GeoPoint>) -> OperationResult<()> {
         match self {
             GeoMapIndex::Mutable(index) => index.add_many_geo_points(id, &values),
@@ -312,7 +317,7 @@ impl ValueIndexer<GeoPoint> for GeoMapIndex {
         }
     }
 
-    fn get_value(&self, value: &Value) -> Option<GeoPoint> {
+    fn get_value(value: &Value) -> Option<GeoPoint> {
         match value {
             Value::Object(obj) => {
                 let lon_op = obj.get("lon").and_then(|x| x.as_f64());
@@ -355,72 +360,70 @@ impl PayloadFieldIndex for GeoMapIndex {
         GeoMapIndex::flusher(self)
     }
 
+    fn files(&self) -> Vec<PathBuf> {
+        vec![]
+    }
+
     fn filter(
         &self,
         condition: &FieldCondition,
-    ) -> OperationResult<Box<dyn Iterator<Item = PointOffsetType> + '_>> {
+    ) -> Option<Box<dyn Iterator<Item = PointOffsetType> + '_>> {
         if let Some(geo_bounding_box) = &condition.geo_bounding_box {
-            let geo_hashes = rectangle_hashes(geo_bounding_box, GEO_QUERY_MAX_REGION)?;
+            let geo_hashes = rectangle_hashes(geo_bounding_box, GEO_QUERY_MAX_REGION).ok()?;
             let geo_condition_copy = geo_bounding_box.clone();
-            return Ok(Box::new(self.get_iterator(geo_hashes).filter(
+            return Some(Box::new(self.get_iterator(geo_hashes).filter(
                 move |point| {
-                    self.get_values(*point)
-                        .unwrap()
-                        .iter()
-                        .any(|point| geo_condition_copy.check_point(point))
+                    self.check_values_any(*point, |geo_point| {
+                        geo_condition_copy.check_point(geo_point)
+                    })
                 },
             )));
         }
 
         if let Some(geo_radius) = &condition.geo_radius {
-            let geo_hashes = circle_hashes(geo_radius, GEO_QUERY_MAX_REGION)?;
+            let geo_hashes = circle_hashes(geo_radius, GEO_QUERY_MAX_REGION).ok()?;
             let geo_condition_copy = geo_radius.clone();
-            return Ok(Box::new(self.get_iterator(geo_hashes).filter(
+            return Some(Box::new(self.get_iterator(geo_hashes).filter(
                 move |point| {
-                    self.get_values(*point)
-                        .unwrap()
-                        .iter()
-                        .any(|point| geo_condition_copy.check_point(point))
+                    self.check_values_any(*point, |geo_point| {
+                        geo_condition_copy.check_point(geo_point)
+                    })
                 },
             )));
         }
 
         if let Some(geo_polygon) = &condition.geo_polygon {
-            let geo_hashes = polygon_hashes(geo_polygon, GEO_QUERY_MAX_REGION)?;
+            let geo_hashes = polygon_hashes(geo_polygon, GEO_QUERY_MAX_REGION).ok()?;
             let geo_condition_copy = geo_polygon.convert();
-            return Ok(Box::new(self.get_iterator(geo_hashes).filter(
+            return Some(Box::new(self.get_iterator(geo_hashes).filter(
                 move |point| {
-                    self.get_values(*point)
-                        .unwrap()
-                        .iter()
-                        .any(|point| geo_condition_copy.check_point(point))
+                    self.check_values_any(*point, |geo_point| {
+                        geo_condition_copy.check_point(geo_point)
+                    })
                 },
             )));
         }
 
-        Err(OperationError::service_error("failed to filter"))
+        None
     }
 
-    fn estimate_cardinality(
-        &self,
-        condition: &FieldCondition,
-    ) -> OperationResult<CardinalityEstimation> {
+    fn estimate_cardinality(&self, condition: &FieldCondition) -> Option<CardinalityEstimation> {
         if let Some(geo_bounding_box) = &condition.geo_bounding_box {
-            let geo_hashes = rectangle_hashes(geo_bounding_box, GEO_QUERY_MAX_REGION)?;
+            let geo_hashes = rectangle_hashes(geo_bounding_box, GEO_QUERY_MAX_REGION).ok()?;
             let mut estimation = self.match_cardinality(&geo_hashes);
             estimation
                 .primary_clauses
                 .push(PrimaryCondition::Condition(condition.clone()));
-            return Ok(estimation);
+            return Some(estimation);
         }
 
         if let Some(geo_radius) = &condition.geo_radius {
-            let geo_hashes = circle_hashes(geo_radius, GEO_QUERY_MAX_REGION)?;
+            let geo_hashes = circle_hashes(geo_radius, GEO_QUERY_MAX_REGION).ok()?;
             let mut estimation = self.match_cardinality(&geo_hashes);
             estimation
                 .primary_clauses
                 .push(PrimaryCondition::Condition(condition.clone()));
-            return Ok(estimation);
+            return Some(estimation);
         }
 
         if let Some(geo_polygon) = &condition.geo_polygon {
@@ -446,12 +449,10 @@ impl PayloadFieldIndex for GeoMapIndex {
             exterior_estimation
                 .primary_clauses
                 .push(PrimaryCondition::Condition(condition.clone()));
-            return Ok(exterior_estimation);
+            return Some(exterior_estimation);
         }
 
-        Err(OperationError::service_error(
-            "failed to estimate cardinality",
-        ))
+        None
     }
 
     fn payload_blocks(
@@ -486,9 +487,9 @@ mod tests {
     use super::*;
     use crate::common::rocksdb_wrapper::open_db_with_existing_cf;
     use crate::fixtures::payload_fixtures::random_geo_payload;
-    use crate::json_path::path;
+    use crate::json_path::JsonPath;
     use crate::types::test_utils::build_polygon;
-    use crate::types::{GeoLineString, GeoPolygon, GeoRadius};
+    use crate::types::{GeoBoundingBox, GeoLineString, GeoPolygon, GeoRadius};
 
     const NYC: GeoPoint = GeoPoint {
         lat: 40.75798,
@@ -518,15 +519,15 @@ mod tests {
     const FIELD_NAME: &str = "test";
 
     fn condition_for_geo_radius(key: &str, geo_radius: GeoRadius) -> FieldCondition {
-        FieldCondition::new_geo_radius(path(key), geo_radius)
+        FieldCondition::new_geo_radius(JsonPath::new(key), geo_radius)
     }
 
     fn condition_for_geo_polygon(key: &str, geo_polygon: GeoPolygon) -> FieldCondition {
-        FieldCondition::new_geo_polygon(path(key), geo_polygon)
+        FieldCondition::new_geo_polygon(JsonPath::new(key), geo_polygon)
     }
 
     fn condition_for_geo_box(key: &str, geo_bounding_box: GeoBoundingBox) -> FieldCondition {
-        FieldCondition::new_geo_bounding_box(path(key), geo_bounding_box)
+        FieldCondition::new_geo_bounding_box(JsonPath::new(key), geo_bounding_box)
     }
 
     fn build_random_index(
@@ -538,9 +539,9 @@ mod tests {
         let db = open_db_with_existing_cf(&temp_dir.path().join("test_db")).unwrap();
 
         let mut rnd = StdRng::seed_from_u64(42);
-        let mut index = GeoMapIndex::new(db.clone(), FIELD_NAME, true);
-
-        index.recreate().unwrap();
+        let mut index = GeoMapIndex::builder(db.clone(), FIELD_NAME)
+            .make_empty()
+            .unwrap();
 
         for idx in 0..num_points {
             let geo_points = random_geo_payload(&mut rnd, num_geo_values..=num_geo_values);
@@ -805,14 +806,18 @@ mod tests {
             check_fn: F,
             is_appendable: bool,
         ) where
-            F: Fn(&GeoPoint) -> bool,
+            F: Fn(&GeoPoint) -> bool + Clone,
         {
             let field_index = build_random_index(1000, 5, is_appendable);
 
             let mut matched_points = (0..field_index.count_indexed_points() as PointOffsetType)
-                .map(|idx| (idx, field_index.get_values(idx).unwrap()))
-                .filter(|(_idx, geo_points)| geo_points.iter().any(&check_fn))
-                .map(|(idx, _geo_points)| idx as PointOffsetType)
+                .filter_map(|idx| {
+                    if field_index.check_values_any(idx, check_fn.clone()) {
+                        Some(idx as PointOffsetType)
+                    } else {
+                        None
+                    }
+                })
                 .collect_vec();
 
             assert!(!matched_points.is_empty());
@@ -866,7 +871,9 @@ mod tests {
             assert!(size < 1000);
         }
 
-        let blocks = field_index.payload_blocks(100, path("test")).collect_vec();
+        let blocks = field_index
+            .payload_blocks(100, JsonPath::new("test"))
+            .collect_vec();
         blocks.iter().for_each(|block| {
             let block_points = field_index.filter(&block.condition).unwrap().collect_vec();
             assert_eq!(block_points.len(), block.cardinality);
@@ -878,9 +885,7 @@ mod tests {
         let temp_dir = Builder::new().prefix("test_dir").tempdir().unwrap();
         let db = open_db_with_existing_cf(&temp_dir.path().join("test_db")).unwrap();
 
-        let mut index = GeoMapIndex::new(db, FIELD_NAME, true);
-
-        index.recreate().unwrap();
+        let mut index = GeoMapIndex::builder(db, FIELD_NAME).make_empty().unwrap();
 
         let r_meters = 100.0;
         let geo_values = json!([
@@ -962,9 +967,7 @@ mod tests {
         let temp_dir = Builder::new().prefix("test_dir").tempdir().unwrap();
         let db = open_db_with_existing_cf(&temp_dir.path().join("test_db")).unwrap();
 
-        let mut index = GeoMapIndex::new(db, FIELD_NAME, true);
-
-        index.recreate().unwrap();
+        let mut index = GeoMapIndex::builder(db, FIELD_NAME).make_empty().unwrap();
 
         let geo_values = json!([
             {
@@ -1009,9 +1012,7 @@ mod tests {
         {
             let db = open_db_with_existing_cf(&temp_dir.path().join("test_db")).unwrap();
 
-            let mut index = GeoMapIndex::new(db, FIELD_NAME, true);
-
-            index.recreate().unwrap();
+            let mut index = GeoMapIndex::builder(db, FIELD_NAME).make_empty().unwrap();
 
             let geo_values = json!([
                 {
@@ -1056,8 +1057,7 @@ mod tests {
         let temp_dir = Builder::new().prefix("test_dir").tempdir().unwrap();
         {
             let db = open_db_with_existing_cf(&temp_dir.path().join("test_db")).unwrap();
-            let mut index = GeoMapIndex::new(db, FIELD_NAME, true);
-            index.recreate().unwrap();
+            let mut index = GeoMapIndex::builder(db, FIELD_NAME).make_empty().unwrap();
 
             let geo_values = json!([
                 {
@@ -1174,9 +1174,7 @@ mod tests {
         {
             let db = open_db_with_existing_cf(&temp_dir.path().join("test_db")).unwrap();
 
-            let mut index = GeoMapIndex::new(db, FIELD_NAME, true);
-
-            index.recreate().unwrap();
+            let mut index = GeoMapIndex::builder(db, FIELD_NAME).make_empty().unwrap();
 
             // Index BERLIN
             let geo_values = json!([

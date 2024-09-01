@@ -1,4 +1,5 @@
 use std::collections::{BTreeSet, HashSet};
+use std::path::PathBuf;
 use std::sync::Arc;
 
 use common::types::PointOffsetType;
@@ -8,22 +9,24 @@ use serde::{Deserialize, Serialize};
 use serde_json::Value;
 
 use crate::common::operation_error::{OperationError, OperationResult};
+use crate::common::rocksdb_buffered_delete_wrapper::DatabaseColumnScheduledDeleteWrapper;
 use crate::common::rocksdb_wrapper::DatabaseColumnWrapper;
 use crate::common::Flusher;
-use crate::data_types::text_index::TextIndexParams;
+use crate::data_types::index::TextIndexParams;
 use crate::index::field_index::full_text_index::inverted_index::{
     Document, InvertedIndex, ParsedQuery,
 };
 use crate::index::field_index::full_text_index::tokenizers::Tokenizer;
 use crate::index::field_index::{
-    CardinalityEstimation, PayloadBlockCondition, PayloadFieldIndex, ValueIndexer,
+    CardinalityEstimation, FieldIndexBuilderTrait, PayloadBlockCondition, PayloadFieldIndex,
+    ValueIndexer,
 };
 use crate::telemetry::PayloadIndexTelemetry;
 use crate::types::{FieldCondition, Match, PayloadKeyType};
 
 pub struct FullTextIndex {
     inverted_index: InvertedIndex,
-    db_wrapper: DatabaseColumnWrapper,
+    db_wrapper: DatabaseColumnScheduledDeleteWrapper,
     config: TextIndexParams,
 }
 
@@ -36,7 +39,7 @@ impl FullTextIndex {
         bincode::deserialize(data).unwrap()
     }
 
-    fn serialize_document_tokens(&self, tokens: BTreeSet<String>) -> OperationResult<Vec<u8>> {
+    fn serialize_document_tokens(tokens: BTreeSet<String>) -> OperationResult<Vec<u8>> {
         #[derive(Serialize)]
         struct StoredDocument {
             tokens: BTreeSet<String>,
@@ -70,12 +73,23 @@ impl FullTextIndex {
         is_appendable: bool,
     ) -> Self {
         let store_cf_name = Self::storage_cf_name(field);
-        let db_wrapper = DatabaseColumnWrapper::new(db, &store_cf_name);
+        let db_wrapper = DatabaseColumnScheduledDeleteWrapper::new(DatabaseColumnWrapper::new(
+            db,
+            &store_cf_name,
+        ));
         FullTextIndex {
             inverted_index: InvertedIndex::new(is_appendable),
             db_wrapper,
             config,
         }
+    }
+
+    pub fn builder(
+        db: Arc<RwLock<DB>>,
+        config: TextIndexParams,
+        field: &str,
+    ) -> FullTextIndexBuilder {
+        FullTextIndexBuilder(Self::new(db, config, field, true))
     }
 
     pub fn get_telemetry_data(&self) -> PayloadIndexTelemetry {
@@ -85,10 +99,6 @@ impl FullTextIndex {
             points_count: self.inverted_index.points_count(),
             histogram_bucket_size: None,
         }
-    }
-
-    pub fn recreate(&self) -> OperationResult<()> {
-        self.db_wrapper.recreate_column_family()
     }
 
     pub fn parse_query(&self, text: &str) -> ParsedQuery {
@@ -130,7 +140,27 @@ impl FullTextIndex {
     }
 }
 
-impl ValueIndexer<String> for FullTextIndex {
+pub struct FullTextIndexBuilder(FullTextIndex);
+
+impl FieldIndexBuilderTrait for FullTextIndexBuilder {
+    type FieldIndexType = FullTextIndex;
+
+    fn init(&mut self) -> OperationResult<()> {
+        self.0.db_wrapper.recreate_column_family()
+    }
+
+    fn add_point(&mut self, id: PointOffsetType, payload: &[&Value]) -> OperationResult<()> {
+        self.0.add_point(id, payload)
+    }
+
+    fn finalize(self) -> OperationResult<Self::FieldIndexType> {
+        Ok(self.0)
+    }
+}
+
+impl ValueIndexer for FullTextIndex {
+    type ValueType = String;
+
     fn add_many(&mut self, idx: PointOffsetType, values: Vec<String>) -> OperationResult<()> {
         if values.is_empty() {
             return Ok(());
@@ -148,14 +178,14 @@ impl ValueIndexer<String> for FullTextIndex {
         self.inverted_index.index_document(idx, document)?;
 
         let db_idx = Self::store_key(&idx);
-        let db_document = self.serialize_document_tokens(tokens)?;
+        let db_document = Self::serialize_document_tokens(tokens)?;
 
         self.db_wrapper.put(db_idx, db_document)?;
 
         Ok(())
     }
 
-    fn get_value(&self, value: &Value) -> Option<String> {
+    fn get_value(value: &Value) -> Option<String> {
         if let Value::String(keyword) = value {
             return Some(keyword.to_owned());
         }
@@ -200,30 +230,30 @@ impl PayloadFieldIndex for FullTextIndex {
         self.db_wrapper.flusher()
     }
 
+    fn files(&self) -> Vec<PathBuf> {
+        vec![]
+    }
+
     fn filter(
         &self,
         condition: &FieldCondition,
-    ) -> OperationResult<Box<dyn Iterator<Item = PointOffsetType> + '_>> {
+    ) -> Option<Box<dyn Iterator<Item = PointOffsetType> + '_>> {
         if let Some(Match::Text(text_match)) = &condition.r#match {
             let parsed_query = self.parse_query(&text_match.text);
-            return Ok(self.inverted_index.filter(&parsed_query));
+            return Some(self.inverted_index.filter(&parsed_query));
         }
-        Err(OperationError::service_error("failed to filter"))
+        None
     }
 
-    fn estimate_cardinality(
-        &self,
-        condition: &FieldCondition,
-    ) -> OperationResult<CardinalityEstimation> {
+    fn estimate_cardinality(&self, condition: &FieldCondition) -> Option<CardinalityEstimation> {
         if let Some(Match::Text(text_match)) = &condition.r#match {
             let parsed_query = self.parse_query(&text_match.text);
-            return Ok(self
-                .inverted_index
-                .estimate_cardinality(&parsed_query, condition));
+            return Some(
+                self.inverted_index
+                    .estimate_cardinality(&parsed_query, condition),
+            );
         }
-        Err(OperationError::service_error(
-            "failed to estimate cardinality",
-        ))
+        None
     }
 
     fn payload_blocks(
@@ -242,11 +272,11 @@ mod tests {
 
     use super::*;
     use crate::common::rocksdb_wrapper::open_db_with_existing_cf;
-    use crate::data_types::text_index::{TextIndexType, TokenizerType};
-    use crate::json_path::path;
+    use crate::data_types::index::{TextIndexType, TokenizerType};
+    use crate::json_path::JsonPath;
 
     fn filter_request(text: &str) -> FieldCondition {
-        FieldCondition::new_match(path("text"), Match::new_text(text))
+        FieldCondition::new_match(JsonPath::new("text"), Match::new_text(text))
     }
 
     #[rstest]
@@ -276,9 +306,9 @@ mod tests {
         {
             let db = open_db_with_existing_cf(&temp_dir.path().join("test_db")).unwrap();
 
-            let mut index = FullTextIndex::new(db, config.clone(), "text", true);
-
-            index.recreate().unwrap();
+            let mut index = FullTextIndex::builder(db, config.clone(), "text")
+                .make_empty()
+                .unwrap();
 
             for (idx, payload) in payloads.iter().enumerate() {
                 index.add_point(idx as PointOffsetType, &[payload]).unwrap();

@@ -1,3 +1,4 @@
+use std::fmt;
 use std::ops::Range;
 use std::sync::atomic::AtomicBool;
 use std::sync::Arc;
@@ -17,8 +18,9 @@ use crate::data_types::vectors::{
 };
 use crate::types::{Distance, MultiVectorConfig, VectorStorageDatatype};
 use crate::vector_storage::bitvec::bitvec_set_deleted;
-use crate::vector_storage::chunked_vectors::{ChunkedVectors, CHUNK_SIZE};
-use crate::vector_storage::common::StoredRecord;
+use crate::vector_storage::chunked_vector_storage::VectorOffsetType;
+use crate::vector_storage::chunked_vectors::ChunkedVectors;
+use crate::vector_storage::common::{StoredRecord, CHUNK_SIZE};
 use crate::vector_storage::{MultiVectorStorage, VectorStorage, VectorStorageEnum};
 
 type StoredMultiDenseVector<T> = StoredRecord<TypedMultiDenseVector<T>>;
@@ -26,8 +28,8 @@ type StoredMultiDenseVector<T> = StoredRecord<TypedMultiDenseVector<T>>;
 /// All fields are counting vectors and not dimensions.
 #[derive(Debug, Clone, Default)]
 struct MultiVectorMetadata {
-    id: PointOffsetType,
-    start: PointOffsetType,
+    id: VectorOffsetType,
+    start: VectorOffsetType,
     inner_vectors_count: usize,
     inner_vector_capacity: usize,
 }
@@ -45,6 +47,20 @@ pub struct SimpleMultiDenseVectorStorage<T: PrimitiveVectorElement> {
     deleted: BitVec,
     /// Current number of deleted vectors.
     deleted_count: usize,
+}
+
+impl<T: fmt::Debug + PrimitiveVectorElement> fmt::Debug for SimpleMultiDenseVectorStorage<T> {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        f.debug_struct("SimpleMultiDenseVectorStorage")
+            .field("dim", &self.dim)
+            .field("distance", &self.distance)
+            .field("multi_vector_config", &self.multi_vector_config)
+            .field("vectors", &self.vectors)
+            .field("vectors_metadata", &self.vectors_metadata)
+            .field("db_wrapper", &self.db_wrapper)
+            .field("deleted_count", &self.deleted_count)
+            .finish_non_exhaustive()
+    }
 }
 
 pub fn open_simple_multi_dense_vector_storage(
@@ -136,12 +152,12 @@ fn open_simple_multi_dense_vector_storage_impl<T: PrimitiveVectorElement>(
         let metadata = &mut vectors_metadata[point_id_usize];
         metadata.inner_vectors_count = stored_record.vector.vectors_count();
         metadata.inner_vector_capacity = metadata.inner_vectors_count;
-        metadata.id = point_id;
+        metadata.id = point_id as VectorOffsetType;
 
-        metadata.start = vectors.len() as PointOffsetType;
+        metadata.start = vectors.len();
         let left_keys = vectors.get_chunk_left_keys(metadata.start);
         if stored_record.vector.vectors_count() > left_keys {
-            metadata.start += left_keys as PointOffsetType;
+            metadata.start += left_keys;
         }
         vectors.insert_many(
             metadata.start,
@@ -231,15 +247,15 @@ impl<T: PrimitiveVectorElement> SimpleMultiDenseVectorStorage<T> {
                 .resize(key_usize + 1, Default::default());
         }
         let metadata = &mut self.vectors_metadata[key_usize];
-        metadata.id = key;
+        metadata.id = key as VectorOffsetType;
         metadata.inner_vectors_count = multi_vector.vectors_count();
 
         if multi_vector.vectors_count() > metadata.inner_vector_capacity {
             metadata.inner_vector_capacity = metadata.inner_vectors_count;
-            metadata.start = self.vectors.len() as PointOffsetType;
+            metadata.start = self.vectors.len();
             let left_keys = self.vectors.get_chunk_left_keys(metadata.start);
             if multi_vector.vectors_count() > left_keys {
-                metadata.start += left_keys as PointOffsetType;
+                metadata.start += left_keys;
             }
             self.vectors.insert_many(
                 metadata.start,
@@ -276,7 +292,7 @@ impl<T: PrimitiveVectorElement> MultiVectorStorage<T> for SimpleMultiDenseVector
             let flattened_vectors = self
                 .vectors
                 .get_many(metadata.start, metadata.inner_vectors_count)
-                .unwrap_or_else(|| panic!("Vectors does not contain data for {:?}", metadata));
+                .unwrap_or_else(|| panic!("Vectors does not contain data for {metadata:?}"));
             TypedMultiDenseVectorRef {
                 flattened_vectors,
                 dim: self.dim,
@@ -287,7 +303,7 @@ impl<T: PrimitiveVectorElement> MultiVectorStorage<T> for SimpleMultiDenseVector
     fn iterate_inner_vectors(&self) -> impl Iterator<Item = &[T]> + Clone + Send {
         (0..self.total_vector_count()).flat_map(|key| {
             let metadata = &self.vectors_metadata[key];
-            (0..metadata.inner_vectors_count).map(|i| self.vectors.get(metadata.start as usize + i))
+            (0..metadata.inner_vectors_count).map(|i| self.vectors.get(metadata.start + i))
         })
     }
 
@@ -339,18 +355,15 @@ impl<T: PrimitiveVectorElement> VectorStorage for SimpleMultiDenseVectorStorage<
         self.insert_vector_impl(key, vector, false)
     }
 
-    fn update_from(
+    fn update_from<'a>(
         &mut self,
-        other: &VectorStorageEnum,
-        other_ids: &mut impl Iterator<Item = PointOffsetType>,
+        other_ids: &'a mut impl Iterator<Item = (CowVector<'a>, bool)>,
         stopped: &AtomicBool,
     ) -> OperationResult<Range<PointOffsetType>> {
         let start_index = self.vectors_metadata.len() as PointOffsetType;
-        for point_id in other_ids {
+        for (other_vector, other_deleted) in other_ids {
             check_process_stopped(stopped)?;
             // Do not perform preprocessing - vectors should be already processed
-            let other_deleted = other.is_deleted_vector(point_id);
-            let other_vector = other.get_vector(point_id);
             let other_vector: VectorRef = other_vector.as_vec_ref();
             let new_id = self.vectors_metadata.len() as PointOffsetType;
             self.insert_vector_impl(new_id, other_vector, other_deleted)?;

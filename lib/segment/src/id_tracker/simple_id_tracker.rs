@@ -1,10 +1,14 @@
 use std::collections::BTreeMap;
+use std::iter;
+use std::path::PathBuf;
 use std::sync::Arc;
 
 use bincode;
 use bitvec::prelude::{BitSlice, BitVec};
 use common::types::PointOffsetType;
+use itertools::Itertools;
 use parking_lot::RwLock;
+use rand::distributions::Distribution;
 use rocksdb::DB;
 use serde::{Deserialize, Serialize};
 use uuid::Uuid;
@@ -26,11 +30,38 @@ enum StoredPointId {
     String(String),
 }
 
+impl From<&ExtendedPointId> for PointIdType {
+    fn from(point_id: &ExtendedPointId) -> Self {
+        match point_id {
+            ExtendedPointId::NumId(idx) => PointIdType::NumId(*idx),
+            ExtendedPointId::Uuid(uuid) => PointIdType::Uuid(*uuid),
+        }
+    }
+}
+
 impl From<&ExtendedPointId> for StoredPointId {
     fn from(point_id: &ExtendedPointId) -> Self {
         match point_id {
             ExtendedPointId::NumId(idx) => StoredPointId::NumId(*idx),
             ExtendedPointId::Uuid(uuid) => StoredPointId::Uuid(*uuid),
+        }
+    }
+}
+
+impl From<ExtendedPointId> for StoredPointId {
+    fn from(point_id: ExtendedPointId) -> Self {
+        Self::from(&point_id)
+    }
+}
+
+impl From<&StoredPointId> for ExtendedPointId {
+    fn from(point_id: &StoredPointId) -> Self {
+        match point_id {
+            StoredPointId::NumId(idx) => ExtendedPointId::NumId(*idx),
+            StoredPointId::Uuid(uuid) => ExtendedPointId::Uuid(*uuid),
+            StoredPointId::String(str) => {
+                unimplemented!("cannot convert internal string id '{str}' to external id")
+            }
         }
     }
 }
@@ -57,6 +88,7 @@ fn external_to_stored_id(point_id: &PointIdType) -> StoredPointId {
     point_id.into()
 }
 
+#[derive(Debug)]
 pub struct SimpleIdTracker {
     deleted: BitVec,
     internal_to_external: Vec<PointIdType>,
@@ -343,6 +375,31 @@ impl IdTracker for SimpleIdTracker {
         }
     }
 
+    fn iter_random(&self) -> Box<dyn Iterator<Item = (PointIdType, PointOffsetType)> + '_> {
+        let rng = rand::thread_rng();
+        let max_internal = self.internal_to_external.len();
+        if max_internal == 0 {
+            return Box::new(iter::empty());
+        }
+        let uniform = rand::distributions::Uniform::new(0, max_internal);
+        let iter = Distribution::sample_iter(uniform, rng)
+            // TODO: this is not efficient if `max_internal` is large and we iterate over most of them,
+            // but it's good enough for low limits.
+            //
+            // We could improve it by using a variable-period PRNG to adjust depending on the number of available points.
+            .unique()
+            .take(max_internal)
+            .filter_map(move |i| {
+                if self.deleted[i] {
+                    None
+                } else {
+                    Some((self.internal_to_external[i], i as PointOffsetType))
+                }
+            });
+
+        Box::new(iter)
+    }
+
     fn total_point_count(&self) -> usize {
         self.internal_to_external.len()
     }
@@ -392,7 +449,7 @@ impl IdTracker for SimpleIdTracker {
                 if let Some(external_id) = self.external_id(internal_id) {
                     to_remove.push(external_id);
                 } else {
-                    debug_assert!(false, "internal id {} has no external id", internal_id);
+                    debug_assert!(false, "internal id {internal_id} has no external id");
                 }
             }
         }
@@ -404,6 +461,14 @@ impl IdTracker for SimpleIdTracker {
             }
         }
         Ok(())
+    }
+
+    fn name(&self) -> &'static str {
+        "simple id tracker"
+    }
+
+    fn files(&self) -> Vec<PathBuf> {
+        vec![]
     }
 }
 

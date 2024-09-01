@@ -4,6 +4,11 @@ use serde::Serialize;
 use validator::{Validate, ValidationError, ValidationErrors};
 
 // Multivector should be small enough to fit the chunk of vector storage
+
+#[cfg(debug_assertions)]
+pub const MAX_MULTIVECTOR_FLATTENED_LEN: usize = 32 * 1024;
+
+#[cfg(not(debug_assertions))]
 pub const MAX_MULTIVECTOR_FLATTENED_LEN: usize = 1024 * 1024;
 
 #[allow(clippy::manual_try_fold)] // `try_fold` can't be used because it shortcuts on Err
@@ -44,11 +49,12 @@ where
     Err(err)
 }
 
-/// Validate that `value` is a non-empty string or `None`.
-pub fn validate_not_empty(value: &Option<String>) -> Result<(), ValidationError> {
-    match value {
-        Some(value) if value.is_empty() => Err(ValidationError::new("not_empty")),
-        _ => Ok(()),
+/// Validate that `value` is a non-empty string.
+pub fn validate_not_empty(value: &str) -> Result<(), ValidationError> {
+    if value.is_empty() {
+        Err(ValidationError::new("not_empty"))
+    } else {
+        Ok(())
     }
 }
 
@@ -110,7 +116,7 @@ pub fn validate_shard_different_peers(
         error.add_param(Cow::from("other_value"), &from_peer_id.to_string());
         error.add_param(
             Cow::from("message"),
-            &format!("cannot transfer shard to itself, \"to_peer_id\" must be different than {} in \"from_peer_id\"", from_peer_id),
+            &format!("cannot transfer shard to itself, \"to_peer_id\" must be different than {from_peer_id} in \"from_peer_id\""),
         );
         error
     });
@@ -136,13 +142,6 @@ pub fn validate_sha256_hash(value: &str) -> Result<(), ValidationError> {
     }
 
     Ok(())
-}
-
-pub fn validate_sha256_hash_option(value: &Option<impl AsRef<str>>) -> Result<(), ValidationError> {
-    value
-        .as_ref()
-        .map(|v| validate_sha256_hash(v.as_ref()))
-        .unwrap_or(Ok(()))
 }
 
 pub fn validate_multi_vector<T>(multivec: &[Vec<T>]) -> Result<(), ValidationErrors> {
@@ -278,10 +277,9 @@ mod tests {
 
     #[test]
     fn test_validate_not_empty() {
-        assert!(validate_not_empty(&None).is_ok());
-        assert!(validate_not_empty(&Some("not empty".into())).is_ok());
-        assert!(validate_not_empty(&Some(" ".into())).is_ok());
-        assert!(validate_not_empty(&Some("".into())).is_err());
+        assert!(validate_not_empty("not empty").is_ok());
+        assert!(validate_not_empty(" ").is_ok());
+        assert!(validate_not_empty("").is_err());
     }
 
     #[test]

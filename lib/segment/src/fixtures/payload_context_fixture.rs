@@ -1,4 +1,4 @@
-use std::path::Path;
+use std::path::{Path, PathBuf};
 use std::sync::Arc;
 
 use atomic_refcell::AtomicRefCell;
@@ -25,6 +25,7 @@ use crate::types::{PayloadSchemaType, PointIdType, SeqNumberType};
 /// Warn: Use for tests only
 ///
 /// This struct mimics the interface of `PointsIterator` and `IdTracker` only for basic cases
+#[derive(Debug)]
 pub struct FixtureIdTracker {
     ids: Vec<PointOffsetType>,
     deleted: BitVec,
@@ -66,7 +67,7 @@ impl IdTracker for FixtureIdTracker {
 
     fn external_id(&self, internal_id: PointOffsetType) -> Option<PointIdType> {
         assert!(internal_id < self.ids.len() as PointOffsetType);
-        Some(PointIdType::NumId(internal_id as u64))
+        Some(PointIdType::NumId(u64::from(internal_id)))
     }
 
     fn set_link(
@@ -90,7 +91,7 @@ impl IdTracker for FixtureIdTracker {
             self.ids
                 .iter()
                 .copied()
-                .map(|id| PointIdType::NumId(id as u64)),
+                .map(|id| PointIdType::NumId(u64::from(id))),
         )
     }
 
@@ -115,8 +116,12 @@ impl IdTracker for FixtureIdTracker {
                 .iter()
                 .copied()
                 .skip_while(move |x| *x < start)
-                .map(|x| (PointIdType::NumId(x as u64), x)),
+                .map(|x| (PointIdType::NumId(u64::from(x)), x)),
         )
+    }
+
+    fn iter_random(&self) -> Box<dyn Iterator<Item = (PointIdType, PointOffsetType)> + '_> {
+        unimplemented!("Not used for tests yet")
     }
 
     fn total_point_count(&self) -> usize {
@@ -158,6 +163,14 @@ impl IdTracker for FixtureIdTracker {
 
     fn cleanup_versions(&mut self) -> OperationResult<()> {
         Ok(())
+    }
+
+    fn name(&self) -> &'static str {
+        "fixture id tracker"
+    }
+
+    fn files(&self) -> Vec<PathBuf> {
+        vec![]
     }
 }
 
@@ -233,22 +246,22 @@ pub fn create_struct_payload_index(
     let mut index = StructPayloadIndex::open(payload_storage, id_tracker, path, true).unwrap();
 
     index
-        .set_indexed(&STR_KEY.parse().unwrap(), PayloadSchemaType::Keyword.into())
+        .set_indexed(&STR_KEY.parse().unwrap(), PayloadSchemaType::Keyword)
         .unwrap();
     index
-        .set_indexed(&INT_KEY.parse().unwrap(), PayloadSchemaType::Integer.into())
+        .set_indexed(&INT_KEY.parse().unwrap(), PayloadSchemaType::Integer)
         .unwrap();
     index
-        .set_indexed(&FLT_KEY.parse().unwrap(), PayloadSchemaType::Float.into())
+        .set_indexed(&FLT_KEY.parse().unwrap(), PayloadSchemaType::Float)
         .unwrap();
     index
-        .set_indexed(&GEO_KEY.parse().unwrap(), PayloadSchemaType::Geo.into())
+        .set_indexed(&GEO_KEY.parse().unwrap(), PayloadSchemaType::Geo)
         .unwrap();
     index
-        .set_indexed(&TEXT_KEY.parse().unwrap(), PayloadSchemaType::Text.into())
+        .set_indexed(&TEXT_KEY.parse().unwrap(), PayloadSchemaType::Text)
         .unwrap();
     index
-        .set_indexed(&BOOL_KEY.parse().unwrap(), PayloadSchemaType::Bool.into())
+        .set_indexed(&BOOL_KEY.parse().unwrap(), PayloadSchemaType::Bool)
         .unwrap();
 
     index

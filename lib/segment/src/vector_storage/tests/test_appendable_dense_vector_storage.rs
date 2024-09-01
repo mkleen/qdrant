@@ -10,7 +10,7 @@ use crate::data_types::vectors::QueryVector;
 use crate::fixtures::payload_context_fixture::FixtureIdTracker;
 use crate::id_tracker::{IdTracker, IdTrackerSS};
 use crate::types::{Distance, PointIdType, QuantizationConfig, ScalarQuantizationConfig};
-use crate::vector_storage::dense::appendable_mmap_dense_vector_storage::open_appendable_memmap_vector_storage;
+use crate::vector_storage::dense::appendable_dense_vector_storage::open_appendable_memmap_vector_storage;
 use crate::vector_storage::dense::simple_dense_vector_storage::open_simple_dense_vector_storage;
 use crate::vector_storage::quantized::quantized_vectors::QuantizedVectors;
 use crate::vector_storage::{new_raw_scorer, VectorStorage, VectorStorageEnum};
@@ -128,13 +128,13 @@ fn do_test_update_from_delete_points(storage: &mut VectorStorageEnum) {
                 }
             });
         }
-        storage
-            .update_from(
-                &storage2,
-                &mut Box::new(0..points.len() as u32),
-                &Default::default(),
-            )
-            .unwrap();
+        let mut iter = (0..points.len()).map(|i| {
+            let i = i as PointOffsetType;
+            let vec = storage2.get_vector(i);
+            let deleted = storage2.is_deleted_vector(i);
+            (vec, deleted)
+        });
+        storage.update_from(&mut iter, &Default::default()).unwrap();
     }
 
     assert_eq!(
@@ -202,7 +202,7 @@ fn do_test_score_points(storage: &mut VectorStorageEnum) {
     };
 
     borrowed_id_tracker
-        .drop(PointIdType::NumId(top_idx as u64))
+        .drop(PointIdType::NumId(u64::from(top_idx)))
         .unwrap();
 
     let raw_scorer =

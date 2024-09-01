@@ -3,7 +3,9 @@ pub mod collections_api;
 pub mod count_api;
 pub mod debug_api;
 pub mod discovery_api;
+pub mod facet_api;
 pub mod issues_api;
+pub mod local_shard_api;
 pub mod query_api;
 pub mod read_params;
 pub mod recommend_api;
@@ -25,7 +27,10 @@ use validator::Validate;
 /// collections. Basic validation is enforced everywhere else.
 #[derive(Deserialize, Validate)]
 struct StrictCollectionPath {
-    #[validate(length(min = 1, max = 255), custom = "validate_collection_name")]
+    #[validate(
+        length(min = 1, max = 255),
+        custom(function = "validate_collection_name")
+    )]
     name: String,
 }
 

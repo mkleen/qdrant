@@ -5,19 +5,19 @@ mod auth;
 mod certificate_helpers;
 #[allow(dead_code)] // May contain functions used in different binaries. Not actually dead
 pub mod helpers;
+pub mod web_ui;
 
 use std::io;
-use std::path::Path;
 use std::sync::Arc;
 
 use ::api::grpc::models::{ApiResponse, ApiStatus, VersionInfo};
 use actix_cors::Cors;
 use actix_multipart::form::tempfile::TempFileConfig;
 use actix_multipart::form::MultipartFormConfig;
-use actix_web::http::header::HeaderValue;
-use actix_web::middleware::{Compress, Condition, DefaultHeaders, Logger};
+use actix_web::middleware::{Compress, Condition, Logger};
 use actix_web::{error, get, web, App, HttpRequest, HttpResponse, HttpServer, Responder};
 use actix_web_extras::middleware::Condition as ConditionEx;
+use api::facet_api::config_facet_api;
 use collection::operations::validation;
 use storage::dispatcher::Dispatcher;
 use storage::rbac::Access;
@@ -28,6 +28,7 @@ use crate::actix::api::count_api::count_points;
 use crate::actix::api::debug_api::config_debugger_api;
 use crate::actix::api::discovery_api::config_discovery_api;
 use crate::actix::api::issues_api::config_issues_api;
+use crate::actix::api::local_shard_api::config_local_shard_api;
 use crate::actix::api::query_api::config_query_api;
 use crate::actix::api::recommend_api::config_recommend_api;
 use crate::actix::api::retrieve_api::{get_point, get_points, scroll_points};
@@ -37,6 +38,7 @@ use crate::actix::api::shards_api::config_shards_api;
 use crate::actix::api::snapshot_api::config_snapshots_api;
 use crate::actix::api::update_api::config_update_api;
 use crate::actix::auth::{Auth, WhitelistItem};
+use crate::actix::web_ui::{web_ui_factory, web_ui_folder, WEB_UI_PATH};
 use crate::common::auth::AuthKeys;
 use crate::common::debugger::DebuggerState;
 use crate::common::health;
@@ -44,9 +46,6 @@ use crate::common::http_client::HttpClient;
 use crate::common::telemetry::TelemetryCollector;
 use crate::settings::{max_web_workers, Settings};
 use crate::tracing::LoggerHandle;
-
-const DEFAULT_STATIC_DIR: &str = "./static";
-const WEB_UI_PATH: &str = "/dashboard";
 
 #[get("/")]
 pub async fn index() -> impl Responder {
@@ -81,31 +80,7 @@ pub fn init(
         let logger_handle_data = web::Data::new(logger_handle);
         let http_client = web::Data::new(HttpClient::from_settings(&settings)?);
         let health_checker = web::Data::new(health_checker);
-        let static_folder = settings
-            .service
-            .static_content_dir
-            .clone()
-            .unwrap_or(DEFAULT_STATIC_DIR.to_string());
-
-        let web_ui_enabled = settings.service.enable_static_content.unwrap_or(true);
-        // validate that the static folder exists IF the web UI is enabled
-        let web_ui_available = if web_ui_enabled {
-            let static_folder = Path::new(&static_folder);
-            if !static_folder.exists() || !static_folder.is_dir() {
-                // enabled BUT folder does not exist
-                log::warn!(
-                    "Static content folder for Web UI '{}' does not exist",
-                    static_folder.display(),
-                );
-                false
-            } else {
-                // enabled AND folder exists
-                true
-            }
-        } else {
-            // not enabled
-            false
-        };
+        let web_ui_available = web_ui_folder(&settings);
 
         let mut api_key_whitelist = vec![
             WhitelistItem::exact("/"),
@@ -113,7 +88,7 @@ pub fn init(
             WhitelistItem::prefix("/readyz"),
             WhitelistItem::prefix("/livez"),
         ];
-        if web_ui_available {
+        if web_ui_available.is_some() {
             api_key_whitelist.push(WhitelistItem::prefix(WEB_UI_PATH));
         }
 
@@ -172,9 +147,11 @@ pub fn init(
                 .configure(config_recommend_api)
                 .configure(config_discovery_api)
                 .configure(config_query_api)
+                .configure(config_facet_api)
                 .configure(config_shards_api)
                 .configure(config_issues_api)
                 .configure(config_debugger_api)
+                .configure(config_local_shard_api)
                 // Ordering of services is important for correct path pattern matching
                 // See: <https://github.com/qdrant/qdrant/issues/3543>
                 .service(scroll_points)
@@ -182,19 +159,10 @@ pub fn init(
                 .service(get_point)
                 .service(get_points);
 
-            if web_ui_available {
-                app = app.service(
-                    actix_web::web::scope(WEB_UI_PATH)
-                        // For security reasons, deny embedding the web UI in an iframe
-                        .wrap(
-                            DefaultHeaders::new()
-                                .add(("X-Frame-Options", HeaderValue::from_static("DENY"))),
-                        )
-                        .service(
-                            actix_files::Files::new("/", &static_folder).index_file("index.html"),
-                        ),
-                )
+            if let Some(static_folder) = web_ui_available.as_deref() {
+                app = app.service(web_ui_factory(static_folder));
             }
+
             app
         })
         .workers(max_web_workers(&settings));
@@ -253,7 +221,7 @@ fn validation_error_handler(
         actix_web_validator::Error::JsonPayloadError(
             actix_web::error::JsonPayloadError::Deserialize(err),
         ) => {
-            format!("Format error in {name}: {}", err,)
+            format!("Format error in {name}: {err}",)
         }
         err => err.to_string(),
     };

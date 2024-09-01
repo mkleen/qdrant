@@ -13,7 +13,7 @@ use segment::index::hnsw_index::graph_links::GraphLinksRam;
 use segment::index::hnsw_index::hnsw::{HNSWIndex, HnswIndexOpenArgs};
 use segment::index::hnsw_index::num_rayon_threads;
 use segment::index::{PayloadIndex, VectorIndex};
-use segment::json_path::path;
+use segment::json_path::JsonPath;
 use segment::segment_constructor::build_segment;
 use segment::types::{
     Condition, Distance, FieldCondition, Filter, HnswConfig, Indexes, Payload, PayloadSchemaType,
@@ -43,7 +43,7 @@ fn random_discovery_query<R: Rng + ?Sized>(rnd: &mut R, dim: usize) -> QueryVect
 
 fn get_random_keyword_of<R: Rng + ?Sized>(num_options: usize, rnd: &mut R) -> String {
     let random_number = rnd.gen_range(0..num_options);
-    format!("keyword_{}", random_number)
+    format!("keyword_{random_number}")
 }
 
 /// Checks discovery search precision when using hnsw index, this is different from the tests in
@@ -216,7 +216,7 @@ fn filtered_hnsw_discover_precision() {
     let payload_index_ptr = segment.payload_index.clone();
     payload_index_ptr
         .borrow_mut()
-        .set_indexed(&path(keyword_key), PayloadSchemaType::Keyword.into())
+        .set_indexed(&JsonPath::new(keyword_key), PayloadSchemaType::Keyword)
         .unwrap();
 
     let hnsw_config = HnswConfig {
@@ -250,7 +250,7 @@ fn filtered_hnsw_discover_precision() {
     let attempts = 100;
     for _i in 0..attempts {
         let filter = Filter::new_must(Condition::Field(FieldCondition::new_match(
-            path(keyword_key),
+            JsonPath::new(keyword_key),
             get_random_keyword_of(num_payload_values, &mut rnd).into(),
         )));
 

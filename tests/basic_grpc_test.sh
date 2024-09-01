@@ -50,6 +50,15 @@ $docker_grpcurl -d '{
   ]
 }' $QDRANT_HOST qdrant.Points/Upsert
 
+# Create payload index
+$docker_grpcurl -d '{
+  "collection_name": "test_collection",
+  "field_name": "city",
+  "field_type": 0,
+  "field_index_params": { "keyword_index_params": {} },
+  "wait": true
+}' $QDRANT_HOST qdrant.Points/CreateFieldIndex
+
 $docker_grpcurl -d '{ "collection_name": "test_collection" }' $QDRANT_HOST qdrant.Collections/Get
 
 $docker_grpcurl -d '{
@@ -106,6 +115,12 @@ $docker_grpcurl -d '{
   "negative": [{ "num": 2 }]
 }' $QDRANT_HOST qdrant.Points/Recommend
 
+# city facet
+$docker_grpcurl -d '{
+  "collection_name": "test_collection",
+  "key": "city"
+}' $QDRANT_HOST qdrant.Points/Facet
+
 # create alias
 $docker_grpcurl -d '{
   "actions": [
@@ -155,6 +170,13 @@ $docker_grpcurl -d '{
   ]
 }' $QDRANT_HOST qdrant.Collections/UpdateAliases
 
+# create bool index
+$docker_grpcurl -d '{
+  "collection_name": "test_collection",
+  "field_name": "bool_field",
+  "field_type": 5,
+  "field_index_params": { "bool_index_params": {} }
+}' $QDRANT_HOST qdrant.Points/CreateFieldIndex
 
 $docker_grpcurl -d '{
   "collection_name": "test_collection",

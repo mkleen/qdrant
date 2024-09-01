@@ -17,6 +17,7 @@ use uuid::Uuid;
 use crate::common::operation_error::{check_process_stopped, OperationError, OperationResult};
 use crate::common::rocksdb_wrapper::{open_db, DB_VECTOR_CF};
 use crate::data_types::vectors::DEFAULT_VECTOR_NAME;
+use crate::id_tracker::immutable_id_tracker::ImmutableIdTracker;
 use crate::id_tracker::simple_id_tracker::SimpleIdTracker;
 use crate::id_tracker::{IdTracker, IdTrackerEnum, IdTrackerSS};
 use crate::index::hnsw_index::hnsw::{HNSWIndex, HnswIndexOpenArgs};
@@ -35,9 +36,10 @@ use crate::types::{
     Distance, Indexes, PayloadStorageType, SegmentConfig, SegmentState, SegmentType, SeqNumberType,
     VectorDataConfig, VectorStorageDatatype, VectorStorageType,
 };
-use crate::vector_storage::dense::appendable_mmap_dense_vector_storage::{
-    open_appendable_memmap_vector_storage, open_appendable_memmap_vector_storage_byte,
-    open_appendable_memmap_vector_storage_half,
+use crate::vector_storage::dense::appendable_dense_vector_storage::{
+    open_appendable_in_ram_vector_storage, open_appendable_in_ram_vector_storage_byte,
+    open_appendable_in_ram_vector_storage_half, open_appendable_memmap_vector_storage,
+    open_appendable_memmap_vector_storage_byte, open_appendable_memmap_vector_storage_half,
 };
 use crate::vector_storage::dense::memmap_dense_vector_storage::{
     open_memmap_vector_storage, open_memmap_vector_storage_byte, open_memmap_vector_storage_half,
@@ -47,7 +49,9 @@ use crate::vector_storage::dense::simple_dense_vector_storage::{
     open_simple_dense_vector_storage,
 };
 use crate::vector_storage::multi_dense::appendable_mmap_multi_dense_vector_storage::{
-    open_appendable_memmap_multi_vector_storage, open_appendable_memmap_multi_vector_storage_byte,
+    open_appendable_in_ram_multi_vector_storage, open_appendable_in_ram_multi_vector_storage_byte,
+    open_appendable_in_ram_multi_vector_storage_half, open_appendable_memmap_multi_vector_storage,
+    open_appendable_memmap_multi_vector_storage_byte,
     open_appendable_memmap_multi_vector_storage_half,
 };
 use crate::vector_storage::multi_dense::simple_multi_dense_vector_storage::{
@@ -247,6 +251,52 @@ pub(crate) fn open_vector_storage(
                 }
             }
         }
+        VectorStorageType::InRamChunkedMmap => {
+            if let Some(multi_vec_config) = &vector_config.multivector_config {
+                match storage_element_type {
+                    VectorStorageDatatype::Float32 => open_appendable_in_ram_multi_vector_storage(
+                        vector_storage_path,
+                        vector_config.size,
+                        vector_config.distance,
+                        *multi_vec_config,
+                    ),
+                    VectorStorageDatatype::Uint8 => {
+                        open_appendable_in_ram_multi_vector_storage_byte(
+                            vector_storage_path,
+                            vector_config.size,
+                            vector_config.distance,
+                            *multi_vec_config,
+                        )
+                    }
+                    VectorStorageDatatype::Float16 => {
+                        open_appendable_in_ram_multi_vector_storage_half(
+                            vector_storage_path,
+                            vector_config.size,
+                            vector_config.distance,
+                            *multi_vec_config,
+                        )
+                    }
+                }
+            } else {
+                match storage_element_type {
+                    VectorStorageDatatype::Float32 => open_appendable_in_ram_vector_storage(
+                        vector_storage_path,
+                        vector_config.size,
+                        vector_config.distance,
+                    ),
+                    VectorStorageDatatype::Uint8 => open_appendable_in_ram_vector_storage_byte(
+                        vector_storage_path,
+                        vector_config.size,
+                        vector_config.distance,
+                    ),
+                    VectorStorageDatatype::Float16 => open_appendable_in_ram_vector_storage_half(
+                        vector_storage_path,
+                        vector_config.size,
+                        vector_config.distance,
+                    ),
+                }
+            }
+        }
     }
 }
 
@@ -284,10 +334,16 @@ pub(crate) fn create_payload_storage(
     Ok(payload_storage)
 }
 
-pub(crate) fn create_id_tracker(database: Arc<RwLock<DB>>) -> OperationResult<IdTrackerEnum> {
-    Ok(IdTrackerEnum::MutableIdTracker(SimpleIdTracker::open(
-        database,
-    )?))
+pub(crate) fn create_mutable_id_tracker(
+    database: Arc<RwLock<DB>>,
+) -> OperationResult<SimpleIdTracker> {
+    SimpleIdTracker::open(database)
+}
+
+pub(crate) fn create_immutable_id_tracker(
+    segment_path: &Path,
+) -> OperationResult<ImmutableIdTracker> {
+    ImmutableIdTracker::open(segment_path)
 }
 
 pub(crate) fn get_payload_index_path(segment_path: &Path) -> PathBuf {
@@ -350,7 +406,7 @@ pub(crate) fn create_sparse_vector_index(
     ) {
         (_, a @ (VectorStorageDatatype::Float16 | VectorStorageDatatype::Uint8), false) => {
             Err(OperationError::ValidationError {
-                description: format!("{:?} datatype is not supported", a),
+                description: format!("{a:?} datatype is not supported"),
             })?
         }
 
@@ -410,7 +466,18 @@ fn create_segment(
 
     let appendable_flag = config.is_appendable();
 
-    let id_tracker = sp(create_id_tracker(database.clone())?);
+    let mutable_id_tracker =
+        appendable_flag || !ImmutableIdTracker::mappings_file_path(segment_path).is_file();
+
+    let id_tracker = if mutable_id_tracker {
+        sp(IdTrackerEnum::MutableIdTracker(create_mutable_id_tracker(
+            database.clone(),
+        )?))
+    } else {
+        sp(IdTrackerEnum::ImmutableIdTracker(
+            create_immutable_id_tracker(segment_path)?,
+        ))
+    };
 
     let payload_index_path = get_payload_index_path(segment_path);
     let payload_index: Arc<AtomicRefCell<StructPayloadIndex>> = sp(StructPayloadIndex::open(
@@ -473,8 +540,8 @@ fn create_segment(
         vector_data.insert(
             vector_name.to_owned(),
             VectorData {
-                vector_storage,
                 vector_index,
+                vector_storage,
                 quantized_vectors,
             },
         );

@@ -1,5 +1,6 @@
 mod fix_payload_indices;
 pub mod fixtures;
+mod payload;
 mod points_dedup;
 mod sha_256_test;
 mod shard_query;
@@ -82,7 +83,7 @@ async fn test_optimization_process() {
     let expected_optimization_count = {
         let cpus = common::cpu::get_cpu_budget(0);
         let hnsw_threads = num_rayon_threads(0);
-        (cpus / hnsw_threads + ((cpus % hnsw_threads) >= hnsw_threads.div_ceil(2)) as usize)
+        (cpus / hnsw_threads + usize::from((cpus % hnsw_threads) >= hnsw_threads.div_ceil(2)))
             .clamp(1, total_optimizations)
     };
 
@@ -190,7 +191,7 @@ async fn test_cancel_optimization() {
         let expected_optimization_count = {
             let cpus = common::cpu::get_cpu_budget(0);
             let hnsw_threads = num_rayon_threads(0);
-            (cpus / hnsw_threads + ((cpus % hnsw_threads) >= hnsw_threads.div_ceil(2)) as usize)
+            (cpus / hnsw_threads + usize::from((cpus % hnsw_threads) >= hnsw_threads.div_ceil(2)))
                 .clamp(1, 3)
         };
 

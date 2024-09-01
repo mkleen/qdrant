@@ -14,39 +14,65 @@ use crate::common::telemetry_ops::requests_telemetry::{
 
 /// Whitelist for REST endpoints in metrics output.
 ///
-/// Contains selection of search, recommend and upsert endpoints.
+/// Contains selection of search, recommend, scroll and upsert endpoints.
 ///
 /// This array *must* be sorted.
 const REST_ENDPOINT_WHITELIST: &[&str] = &[
     "/collections/{name}/index",
     "/collections/{name}/points",
+    "/collections/{name}/points/batch",
+    "/collections/{name}/points/count",
+    "/collections/{name}/points/delete",
     "/collections/{name}/points/discover",
     "/collections/{name}/points/discover/batch",
+    "/collections/{name}/points/facet",
     "/collections/{name}/points/payload",
+    "/collections/{name}/points/payload/clear",
+    "/collections/{name}/points/payload/delete",
     "/collections/{name}/points/query",
     "/collections/{name}/points/query/batch",
+    "/collections/{name}/points/query/groups",
     "/collections/{name}/points/recommend",
     "/collections/{name}/points/recommend/batch",
+    "/collections/{name}/points/recommend/groups",
+    "/collections/{name}/points/scroll",
     "/collections/{name}/points/search",
     "/collections/{name}/points/search/batch",
+    "/collections/{name}/points/search/groups",
+    "/collections/{name}/points/search/matrix/offsets",
+    "/collections/{name}/points/search/matrix/pairs",
+    "/collections/{name}/points/vectors",
+    "/collections/{name}/points/vectors/delete",
 ];
 
 /// Whitelist for GRPC endpoints in metrics output.
 ///
-/// Contains selection of search, recommend and upsert endpoints.
+/// Contains selection of search, recommend, scroll and upsert endpoints.
 ///
 /// This array *must* be sorted.
 const GRPC_ENDPOINT_WHITELIST: &[&str] = &[
+    "/qdrant.Points/ClearPayload",
+    "/qdrant.Points/Count",
+    "/qdrant.Points/Delete",
+    "/qdrant.Points/DeletePayload",
     "/qdrant.Points/Discover",
     "/qdrant.Points/DiscoverBatch",
+    "/qdrant.Points/Facet",
+    "/qdrant.Points/Get",
     "/qdrant.Points/OverwritePayload",
     "/qdrant.Points/Query",
     "/qdrant.Points/QueryBatch",
+    "/qdrant.Points/QueryGroups",
     "/qdrant.Points/Recommend",
     "/qdrant.Points/RecommendBatch",
+    "/qdrant.Points/RecommendGroups",
+    "/qdrant.Points/Scroll",
     "/qdrant.Points/Search",
     "/qdrant.Points/SearchBatch",
+    "/qdrant.Points/SearchGroups",
     "/qdrant.Points/SetPayload",
+    "/qdrant.Points/UpdateBatch",
+    "/qdrant.Points/UpdateVectors",
     "/qdrant.Points/Upsert",
 ];
 
@@ -91,8 +117,8 @@ impl MetricsProvider for AppBuildTelemetry {
         metrics.push(metric_family(
             "app_info",
             "information about qdrant server",
-            MetricType::COUNTER,
-            vec![counter(
+            MetricType::GAUGE,
+            vec![gauge(
                 1.0,
                 &[("name", &self.name), ("version", &self.version)],
             )],
@@ -106,8 +132,8 @@ impl MetricsProvider for AppFeaturesTelemetry {
         metrics.push(metric_family(
             "app_status_recovery_mode",
             "features enabled in qdrant server",
-            MetricType::COUNTER,
-            vec![counter(if self.recovery_mode { 1.0 } else { 0.0 }, &[])],
+            MetricType::GAUGE,
+            vec![gauge(if self.recovery_mode { 1.0 } else { 0.0 }, &[])],
         ))
     }
 }
@@ -144,13 +170,14 @@ impl MetricsProvider for ClusterTelemetry {
             enabled,
             status,
             config: _,
+            peers: _,
         } = self;
 
         metrics.push(metric_family(
             "cluster_enabled",
             "is cluster support enabled",
-            MetricType::COUNTER,
-            vec![counter(if *enabled { 1.0 } else { 0.0 }, &[])],
+            MetricType::GAUGE,
+            vec![gauge(if *enabled { 1.0 } else { 0.0 }, &[])],
         ));
 
         if let Some(ref status) = status {
@@ -278,15 +305,15 @@ impl OperationDurationMetricsBuilder {
         }
 
         self.avg_secs.push(gauge(
-            stat.avg_duration_micros.unwrap_or(0.0) as f64 / 1_000_000.0,
+            f64::from(stat.avg_duration_micros.unwrap_or(0.0)) / 1_000_000.0,
             labels,
         ));
         self.min_secs.push(gauge(
-            stat.min_duration_micros.unwrap_or(0.0) as f64 / 1_000_000.0,
+            f64::from(stat.min_duration_micros.unwrap_or(0.0)) / 1_000_000.0,
             labels,
         ));
         self.max_secs.push(gauge(
-            stat.max_duration_micros.unwrap_or(0.0) as f64 / 1_000_000.0,
+            f64::from(stat.max_duration_micros.unwrap_or(0.0)) / 1_000_000.0,
             labels,
         ));
         self.duration_histogram_secs.push(histogram(
@@ -295,7 +322,7 @@ impl OperationDurationMetricsBuilder {
             &stat
                 .duration_micros_histogram
                 .iter()
-                .map(|&(b, c)| (b as f64 / 1_000_000.0, c as u64))
+                .map(|&(b, c)| (f64::from(b) / 1_000_000.0, c as u64))
                 .collect::<Vec<_>>(),
             labels,
         ));

@@ -58,6 +58,7 @@ const SINGLE_THREADED_HNSW_BUILD_THRESHOLD: usize = 32;
 #[cfg(not(debug_assertions))]
 const SINGLE_THREADED_HNSW_BUILD_THRESHOLD: usize = 256;
 
+#[derive(Debug)]
 pub struct HNSWIndex<TGraphLinks: GraphLinks> {
     id_tracker: Arc<AtomicRefCell<IdTrackerSS>>,
     vector_storage: Arc<AtomicRefCell<VectorStorageEnum>>,
@@ -69,6 +70,7 @@ pub struct HNSWIndex<TGraphLinks: GraphLinks> {
     searches_telemetry: HNSWSearchesTelemetry,
 }
 
+#[derive(Debug)]
 struct HNSWSearchesTelemetry {
     unfiltered_plain: Arc<Mutex<OperationDurationsAggregator>>,
     unfiltered_hnsw: Arc<Mutex<OperationDurationsAggregator>>,
@@ -429,9 +431,10 @@ impl<TGraphLinks: GraphLinks> HNSWIndex<TGraphLinks> {
 
         let deleted_bitslice = vector_storage.deleted_vector_bitslice();
 
+        let cardinality_estimation = payload_index.estimate_cardinality(&filter);
+
         let points_to_index: Vec<_> = payload_index
-            .query_points(&filter)
-            .into_iter()
+            .iter_filtered_points(&filter, id_tracker, &cardinality_estimation)
             .filter(|&point_id| {
                 !deleted_bitslice
                     .get(point_id as usize)

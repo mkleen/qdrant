@@ -63,7 +63,7 @@ pub fn fixture_sparse_index_from_iter<I: InvertedIndex>(
         borrowed_storage
             .insert_vector(idx as PointOffsetType, (&vec).into())
             .unwrap();
-        num_vectors_not_empty += !vec.is_empty() as usize;
+        num_vectors_not_empty += usize::from(!vec.is_empty());
     }
     drop(borrowed_storage);
 
@@ -114,12 +114,23 @@ pub fn fixture_sparse_index<I: InvertedIndex + Debug, R: Rng + ?Sized>(
 macro_rules! fixture_for_all_indices {
     ($test:ident::<_>($($args:tt)*)) => {
         eprintln!("InvertedIndexCompressedImmutableRam<f32>");
-        $test::<InvertedIndexCompressedImmutableRam<f32>>($($args)*);
+        $test::<
+            ::sparse::index::inverted_index::inverted_index_compressed_immutable_ram::InvertedIndexCompressedImmutableRam<f32>
+        >($($args)*);
+
         eprintln!("InvertedIndexCompressedMmap<f32>");
-        $test::<InvertedIndexCompressedMmap<f32>>($($args)*);
+        $test::<
+            ::sparse::index::inverted_index::inverted_index_compressed_mmap::InvertedIndexCompressedMmap<f32>
+        >($($args)*);
+
         eprintln!("InvertedIndexImmutableRam");
-        $test::<InvertedIndexImmutableRam>($($args)*);
+        $test::<
+            ::sparse::index::inverted_index::inverted_index_immutable_ram::InvertedIndexImmutableRam
+        >($($args)*);
+
         eprintln!("InvertedIndexMmap");
-        $test::<InvertedIndexMmap>($($args)*);
+        $test::<
+            ::sparse::index::inverted_index::inverted_index_mmap::InvertedIndexMmap
+        >($($args)*);
     };
 }

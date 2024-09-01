@@ -1,4 +1,5 @@
 use std::path::{Path, PathBuf};
+use std::str::FromStr;
 use std::time::SystemTime;
 
 use api::grpc::conversions::naive_date_time_to_proto;
@@ -30,9 +31,9 @@ impl TryFrom<i32> for SnapshotPriority {
     type Error = tonic::Status;
 
     fn try_from(snapshot_priority: i32) -> Result<Self, Self::Error> {
-        api::grpc::qdrant::ShardSnapshotPriority::from_i32(snapshot_priority)
+        api::grpc::qdrant::ShardSnapshotPriority::try_from(snapshot_priority)
             .map(Into::into)
-            .ok_or_else(|| tonic::Status::invalid_argument("Malformed shard snapshot priority"))
+            .map_err(|_| tonic::Status::invalid_argument("Malformed shard snapshot priority"))
     }
 }
 
@@ -73,7 +74,7 @@ pub struct SnapshotRecover {
 
     /// Optional SHA256 checksum to verify snapshot integrity before recovery.
     #[serde(default)]
-    #[validate(custom = "common::validation::validate_sha256_hash")]
+    #[validate(custom(function = "common::validation::validate_sha256_hash"))]
     pub checksum: Option<String>,
 
     /// Optional API key used when fetching the snapshot from a remote URL.
@@ -81,7 +82,17 @@ pub struct SnapshotRecover {
     pub api_key: Option<String>,
 }
 
+fn snapshot_description_example() -> SnapshotDescription {
+    SnapshotDescription {
+        name: "my-collection-3766212330831337-2024-07-22-08-31-55.snapshot".to_string(),
+        creation_time: Some(NaiveDateTime::from_str("2022-08-04T10:49:10").unwrap()),
+        size: 1_000_000,
+        checksum: Some("a1b2c3d4e5f6a7b8c9d0e1f2a3b4c5d6e7f8a9b0c1d2e3f4a5b6c7d8e9f0".to_string()),
+    }
+}
+
 #[derive(Debug, Deserialize, Serialize, JsonSchema, Clone)]
+#[schemars(example = "snapshot_description_example")]
 pub struct SnapshotDescription {
     pub name: String,
     pub creation_time: Option<NaiveDateTime>,
@@ -136,23 +147,6 @@ pub fn get_checksum_path(snapshot_path: impl Into<PathBuf>) -> PathBuf {
     checksum_path.into()
 }
 
-pub async fn list_snapshots_in_directory(
-    directory: &Path,
-) -> CollectionResult<Vec<SnapshotDescription>> {
-    let mut entries = tokio::fs::read_dir(directory).await?;
-    let mut snapshots = Vec::new();
-
-    while let Some(entry) = entries.next_entry().await? {
-        let path = entry.path();
-
-        if !path.is_dir() && path.extension().map_or(false, |ext| ext == "snapshot") {
-            snapshots.push(get_snapshot_description(&path).await?);
-        }
-    }
-
-    Ok(snapshots)
-}
-
 #[derive(Clone, Debug, serde::Deserialize, serde::Serialize, schemars::JsonSchema)]
 pub struct ShardSnapshotRecover {
     pub location: ShardSnapshotLocation,
@@ -161,7 +155,7 @@ pub struct ShardSnapshotRecover {
     pub priority: Option<SnapshotPriority>,
 
     /// Optional SHA256 checksum to verify snapshot integrity before recovery.
-    #[validate(custom = "common::validation::validate_sha256_hash")]
+    #[validate(custom(function = "common::validation::validate_sha256_hash"))]
     #[serde(default)]
     pub checksum: Option<String>,
 

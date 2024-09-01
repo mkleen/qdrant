@@ -9,7 +9,7 @@ use common::types::PointOffsetType;
 use io::file_operations::{atomic_save_json, read_json};
 use io::storage_version::StorageVersion;
 use memmap2::Mmap;
-use memory::madvise;
+use memory::madvise::{Advice, AdviceSetting};
 use memory::mmap_ops::{
     create_and_ensure_length, open_read_mmap, transmute_from_u8_to_slice, transmute_to_u8,
     transmute_to_u8_slice,
@@ -155,18 +155,18 @@ impl<W: Weight> InvertedIndexCompressedMmap<W> {
         }
 
         let header: PostingListFileHeader<W> = self.slice_part::<PostingListFileHeader<W>>(
-            *id as u64 * size_of::<PostingListFileHeader<W>>() as u64,
+            u64::from(*id) * size_of::<PostingListFileHeader<W>>() as u64,
             1u32,
         )[0]
         .clone();
 
         let remainders_start = header.ids_start
-            + header.ids_len as u64
-            + header.chunks_count as u64 * size_of::<CompressedPostingChunk<W>>() as u64;
+            + u64::from(header.ids_len)
+            + u64::from(header.chunks_count) * size_of::<CompressedPostingChunk<W>>() as u64;
 
         let remainders_end = if *id + 1 < self.file_header.posting_count as DimId {
             self.slice_part::<PostingListFileHeader<W>>(
-                (*id + 1) as u64 * size_of::<PostingListFileHeader<W>>() as u64,
+                u64::from(*id + 1) * size_of::<PostingListFileHeader<W>>() as u64,
                 1u32,
             )[0]
             .ids_start
@@ -186,7 +186,7 @@ impl<W: Weight> InvertedIndexCompressedMmap<W> {
         Some(CompressedPostingListView::new(
             self.slice_part(header.ids_start, header.ids_len),
             self.slice_part(
-                header.ids_start + header.ids_len as u64,
+                header.ids_start + u64::from(header.ids_len),
                 header.chunks_count,
             ),
             transmute_from_u8_to_slice(
@@ -258,7 +258,7 @@ impl<W: Weight> InvertedIndexCompressedMmap<W> {
 
         Ok(Self {
             path: path.as_ref().to_owned(),
-            mmap: Arc::new(open_read_mmap(file_path.as_ref())?),
+            mmap: Arc::new(open_read_mmap(file_path.as_ref(), AdviceSetting::Global)?),
             file_header,
             _phantom: PhantomData,
         })
@@ -271,8 +271,7 @@ impl<W: Weight> InvertedIndexCompressedMmap<W> {
         let file_header: InvertedIndexFileHeader = read_json(&config_file_path)?;
         // read index data into mmap
         let file_path = Self::index_file_path(path.as_ref());
-        let mmap = open_read_mmap(file_path.as_ref())?;
-        madvise::madvise(&mmap, madvise::Advice::Normal)?;
+        let mmap = open_read_mmap(file_path.as_ref(), AdviceSetting::from(Advice::Normal))?;
         Ok(Self {
             path: path.as_ref().to_owned(),
             mmap: Arc::new(mmap),

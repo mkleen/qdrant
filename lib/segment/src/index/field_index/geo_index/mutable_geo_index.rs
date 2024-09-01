@@ -8,6 +8,7 @@ use rocksdb::DB;
 
 use super::GeoMapIndex;
 use crate::common::operation_error::{OperationError, OperationResult};
+use crate::common::rocksdb_buffered_delete_wrapper::DatabaseColumnScheduledDeleteWrapper;
 use crate::common::rocksdb_wrapper::DatabaseColumnWrapper;
 use crate::index::field_index::geo_hash::{encode_max_precision, GeoHash};
 use crate::types::GeoPoint;
@@ -38,12 +39,15 @@ pub struct MutableGeoMapIndex {
     pub points_count: usize,
     pub points_values_count: usize,
     pub max_values_per_point: usize,
-    db_wrapper: DatabaseColumnWrapper,
+    db_wrapper: DatabaseColumnScheduledDeleteWrapper,
 }
 
 impl MutableGeoMapIndex {
     pub fn new(db: Arc<RwLock<DB>>, store_cf_name: &str) -> Self {
-        let db_wrapper = DatabaseColumnWrapper::new(db, store_cf_name);
+        let db_wrapper = DatabaseColumnScheduledDeleteWrapper::new(DatabaseColumnWrapper::new(
+            db,
+            store_cf_name,
+        ));
         Self {
             points_per_hash: Default::default(),
             values_per_hash: Default::default(),
@@ -56,12 +60,26 @@ impl MutableGeoMapIndex {
         }
     }
 
-    pub fn db_wrapper(&self) -> &DatabaseColumnWrapper {
+    pub fn db_wrapper(&self) -> &DatabaseColumnScheduledDeleteWrapper {
         &self.db_wrapper
     }
 
-    pub fn get_values(&self, idx: PointOffsetType) -> Option<&[GeoPoint]> {
-        self.point_to_values.get(idx as usize).map(Vec::as_slice)
+    pub fn check_values_any(
+        &self,
+        idx: PointOffsetType,
+        check_fn: impl Fn(&GeoPoint) -> bool,
+    ) -> bool {
+        self.point_to_values
+            .get(idx as usize)
+            .map(|values| values.iter().any(check_fn))
+            .unwrap_or(false)
+    }
+
+    pub fn values_count(&self, idx: PointOffsetType) -> usize {
+        self.point_to_values
+            .get(idx as usize)
+            .map(Vec::len)
+            .unwrap_or_default()
     }
 
     pub fn get_points_per_hash(&self) -> impl Iterator<Item = (&GeoHash, usize)> {
@@ -115,7 +133,7 @@ impl MutableGeoMapIndex {
             self.points_values_count += 1;
         }
 
-        for (_idx, geo_hashes) in points_to_hashes.into_iter() {
+        for (_idx, geo_hashes) in points_to_hashes {
             self.max_values_per_point = max(self.max_values_per_point, geo_hashes.len());
             self.increment_hash_point_counts(&geo_hashes);
             for geo_hash in geo_hashes {
@@ -270,8 +288,7 @@ impl MutableGeoMapIndex {
                 None => {
                     debug_assert!(
                         false,
-                        "Hash value count is not found for hash: {}",
-                        sub_geo_hash
+                        "Hash value count is not found for hash: {sub_geo_hash}"
                     );
                     self.values_per_hash.insert(sub_geo_hash.into(), 0);
                 }
@@ -295,8 +312,7 @@ impl MutableGeoMapIndex {
                     None => {
                         debug_assert!(
                             false,
-                            "Hash point count is not found for hash: {}",
-                            sub_geo_hash
+                            "Hash point count is not found for hash: {sub_geo_hash}"
                         );
                         self.points_per_hash.insert(sub_geo_hash.into(), 0);
                     }

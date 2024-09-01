@@ -6,6 +6,8 @@ use io::file_operations::FileStorageError;
 use tempfile::PersistError;
 use thiserror::Error;
 
+pub type StorageResult<T> = Result<T, StorageError>;
+
 #[derive(Error, Debug, Clone)]
 #[error("{0}")]
 pub enum StorageError {
@@ -131,6 +133,7 @@ impl StorageError {
                 description: overriding_description,
                 backtrace: None,
             },
+            CollectionError::StrictMode { description } => StorageError::Forbidden { description },
         }
     }
 }
@@ -179,6 +182,7 @@ impl From<CollectionError> for StorageError {
                 description: format!("{err}"),
                 backtrace: None,
             },
+            CollectionError::StrictMode { description } => StorageError::Forbidden { description },
         }
     }
 }
@@ -259,8 +263,8 @@ impl From<serde_json::Error> for StorageError {
     }
 }
 
-impl From<prost::EncodeError> for StorageError {
-    fn from(err: prost::EncodeError) -> Self {
+impl From<prost_for_raft::EncodeError> for StorageError {
+    fn from(err: prost_for_raft::EncodeError) -> Self {
         StorageError::ServiceError {
             description: format!("prost encode error: {err}"),
             backtrace: Some(Backtrace::force_capture().to_string()),
@@ -268,8 +272,8 @@ impl From<prost::EncodeError> for StorageError {
     }
 }
 
-impl From<prost::DecodeError> for StorageError {
-    fn from(err: prost::DecodeError) -> Self {
+impl From<prost_for_raft::DecodeError> for StorageError {
+    fn from(err: prost_for_raft::DecodeError) -> Self {
         StorageError::ServiceError {
             description: format!("prost decode error: {err}"),
             backtrace: Some(Backtrace::force_capture().to_string()),

@@ -33,10 +33,29 @@ impl<N: Default> ImmutablePointToValues<N> {
         }
     }
 
-    pub fn get_values(&self, idx: PointOffsetType) -> Option<&[N]> {
+    pub fn check_values_any(&self, idx: PointOffsetType, check_fn: impl Fn(&N) -> bool) -> bool {
+        let Some(range) = self.point_to_values.get(idx as usize).cloned() else {
+            return false;
+        };
+
+        let range = range.start as usize..range.end as usize;
+        if let Some(values) = self.point_to_values_container.get(range) {
+            values.iter().any(check_fn)
+        } else {
+            false
+        }
+    }
+
+    pub fn get_values(&self, idx: PointOffsetType) -> Option<impl Iterator<Item = &N> + '_> {
         let range = self.point_to_values.get(idx as usize)?.clone();
         let range = range.start as usize..range.end as usize;
-        Some(&self.point_to_values_container[range])
+        Some(self.point_to_values_container[range].iter())
+    }
+
+    pub fn get_values_count(&self, idx: PointOffsetType) -> Option<usize> {
+        self.point_to_values
+            .get(idx as usize)
+            .map(|range| (range.end - range.start) as usize)
     }
 
     pub fn remove_point(&mut self, idx: PointOffsetType) -> Vec<N> {
@@ -79,23 +98,23 @@ mod tests {
 
         let check = |point_to_values: &ImmutablePointToValues<_>, values: &[Vec<_>]| {
             for (idx, values) in values.iter().enumerate() {
-                assert_eq!(
-                    point_to_values.get_values(idx as PointOffsetType),
-                    Some(values.as_slice()),
-                );
+                let values_vec: Option<Vec<_>> = point_to_values
+                    .get_values(idx as PointOffsetType)
+                    .map(|i| i.copied().collect());
+                assert_eq!(values_vec, Some(values.clone()),);
             }
         };
 
-        check(&point_to_values, &values);
+        check(&point_to_values, values.as_slice());
 
         point_to_values.remove_point(0);
         values[0].clear();
 
-        check(&point_to_values, &values);
+        check(&point_to_values, values.as_slice());
 
         point_to_values.remove_point(3);
         values[3].clear();
 
-        check(&point_to_values, &values);
+        check(&point_to_values, values.as_slice());
     }
 }

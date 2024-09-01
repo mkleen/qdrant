@@ -2,7 +2,11 @@ use std::sync::Arc;
 use std::time::Duration;
 
 use api::rest::{SearchGroupsRequestInternal, ShardKeySelector};
+use collection::collection::distance_matrix::{
+    CollectionSearchMatrixRequest, CollectionSearchMatrixResponse,
+};
 use collection::common::batching::batch_requests;
+use collection::grouping::group_by::GroupRequest;
 use collection::operations::consistency_params::ReadConsistency;
 use collection::operations::payload_ops::{
     DeletePayload, DeletePayloadOp, PayloadOps, SetPayload, SetPayloadOp,
@@ -14,10 +18,12 @@ use collection::operations::point_ops::{
 use collection::operations::shard_selector_internal::ShardSelectorInternal;
 use collection::operations::types::{
     CoreSearchRequest, CoreSearchRequestBatch, CountRequestInternal, CountResult,
-    DiscoverRequestBatch, DiscoverRequestInternal, GroupsResult, PointRequestInternal,
-    RecommendGroupsRequestInternal, Record, ScrollRequestInternal, ScrollResult, UpdateResult,
+    DiscoverRequestBatch, GroupsResult, PointRequestInternal, RecommendGroupsRequestInternal,
+    Record, ScrollRequestInternal, ScrollResult, UpdateResult,
 };
-use collection::operations::universal_query::collection_query::CollectionQueryRequest;
+use collection::operations::universal_query::collection_query::{
+    CollectionQueryGroupsRequest, CollectionQueryRequest,
+};
 use collection::operations::vector_ops::{
     DeleteVectors, UpdateVectors, UpdateVectorsOp, VectorOperations,
 };
@@ -47,49 +53,49 @@ pub struct CreateFieldIndex {
 
 #[derive(Deserialize, Serialize, JsonSchema, Validate)]
 pub struct UpsertOperation {
-    #[validate]
+    #[validate(nested)]
     upsert: PointInsertOperations,
 }
 
 #[derive(Deserialize, Serialize, JsonSchema, Validate)]
 pub struct DeleteOperation {
-    #[validate]
+    #[validate(nested)]
     delete: PointsSelector,
 }
 
 #[derive(Deserialize, Serialize, JsonSchema, Validate)]
 pub struct SetPayloadOperation {
-    #[validate]
+    #[validate(nested)]
     set_payload: SetPayload,
 }
 
 #[derive(Deserialize, Serialize, JsonSchema, Validate)]
 pub struct OverwritePayloadOperation {
-    #[validate]
+    #[validate(nested)]
     overwrite_payload: SetPayload,
 }
 
 #[derive(Deserialize, Serialize, JsonSchema, Validate)]
 pub struct DeletePayloadOperation {
-    #[validate]
+    #[validate(nested)]
     delete_payload: DeletePayload,
 }
 
 #[derive(Deserialize, Serialize, JsonSchema, Validate)]
 pub struct ClearPayloadOperation {
-    #[validate]
+    #[validate(nested)]
     clear_payload: PointsSelector,
 }
 
 #[derive(Deserialize, Serialize, JsonSchema, Validate)]
 pub struct UpdateVectorsOperation {
-    #[validate]
+    #[validate(nested)]
     update_vectors: UpdateVectors,
 }
 
 #[derive(Deserialize, Serialize, JsonSchema, Validate)]
 pub struct DeleteVectorsOperation {
-    #[validate]
+    #[validate(nested)]
     delete_vectors: DeleteVectors,
 }
 
@@ -853,7 +859,7 @@ pub async fn do_search_point_groups(
 ) -> Result<GroupsResult, StorageError> {
     toc.group(
         collection_name,
-        request.into(),
+        GroupRequest::from(request),
         read_consistency,
         shard_selection,
         access,
@@ -873,29 +879,9 @@ pub async fn do_recommend_point_groups(
 ) -> Result<GroupsResult, StorageError> {
     toc.group(
         collection_name,
-        request.into(),
+        GroupRequest::from(request),
         read_consistency,
         shard_selection,
-        access,
-        timeout,
-    )
-    .await
-}
-
-pub async fn do_discover_points(
-    toc: &TableOfContent,
-    collection_name: &str,
-    request: DiscoverRequestInternal,
-    read_consistency: Option<ReadConsistency>,
-    shard_selector: ShardSelectorInternal,
-    access: Access,
-    timeout: Option<Duration>,
-) -> Result<Vec<ScoredPoint>, StorageError> {
-    toc.discover(
-        collection_name,
-        request,
-        read_consistency,
-        shard_selector,
         access,
         timeout,
     )
@@ -932,6 +918,7 @@ pub async fn do_count_points(
     collection_name: &str,
     request: CountRequestInternal,
     read_consistency: Option<ReadConsistency>,
+    timeout: Option<Duration>,
     shard_selection: ShardSelectorInternal,
     access: Access,
 ) -> Result<CountResult, StorageError> {
@@ -939,6 +926,7 @@ pub async fn do_count_points(
         collection_name,
         request,
         read_consistency,
+        timeout,
         shard_selection,
         access,
     )
@@ -950,6 +938,7 @@ pub async fn do_get_points(
     collection_name: &str,
     request: PointRequestInternal,
     read_consistency: Option<ReadConsistency>,
+    timeout: Option<Duration>,
     shard_selection: ShardSelectorInternal,
     access: Access,
 ) -> Result<Vec<Record>, StorageError> {
@@ -957,6 +946,7 @@ pub async fn do_get_points(
         collection_name,
         request,
         read_consistency,
+        timeout,
         shard_selection,
         access,
     )
@@ -968,6 +958,7 @@ pub async fn do_scroll_points(
     collection_name: &str,
     request: ScrollRequestInternal,
     read_consistency: Option<ReadConsistency>,
+    timeout: Option<Duration>,
     shard_selection: ShardSelectorInternal,
     access: Access,
 ) -> Result<ScrollResult, StorageError> {
@@ -975,6 +966,7 @@ pub async fn do_scroll_points(
         collection_name,
         request,
         read_consistency,
+        timeout,
         shard_selection,
         access,
     )
@@ -1010,4 +1002,44 @@ pub async fn do_query_batch_points(
 ) -> Result<Vec<Vec<ScoredPoint>>, StorageError> {
     toc.query_batch(collection_name, requests, read_consistency, access, timeout)
         .await
+}
+
+pub async fn do_query_point_groups(
+    toc: &TableOfContent,
+    collection_name: &str,
+    request: CollectionQueryGroupsRequest,
+    read_consistency: Option<ReadConsistency>,
+    shard_selection: ShardSelectorInternal,
+    access: Access,
+    timeout: Option<Duration>,
+) -> Result<GroupsResult, StorageError> {
+    toc.group(
+        collection_name,
+        GroupRequest::from(request),
+        read_consistency,
+        shard_selection,
+        access,
+        timeout,
+    )
+    .await
+}
+
+pub async fn do_search_points_matrix(
+    toc: &TableOfContent,
+    collection_name: &str,
+    request: CollectionSearchMatrixRequest,
+    read_consistency: Option<ReadConsistency>,
+    shard_selection: ShardSelectorInternal,
+    access: Access,
+    timeout: Option<Duration>,
+) -> Result<CollectionSearchMatrixResponse, StorageError> {
+    toc.search_points_matrix(
+        collection_name,
+        request,
+        read_consistency,
+        shard_selection,
+        access,
+        timeout,
+    )
+    .await
 }

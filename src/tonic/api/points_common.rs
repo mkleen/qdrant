@@ -8,13 +8,13 @@ use api::grpc::qdrant::{
     points_update_operation, BatchResult, ClearPayloadPoints, CoreSearchPoints, CountPoints,
     CountResponse, CreateFieldIndexCollection, DeleteFieldIndexCollection, DeletePayloadPoints,
     DeletePointVectors, DeletePoints, DiscoverBatchResponse, DiscoverPoints, DiscoverResponse,
-    FieldType, GetPoints, GetResponse, PayloadIndexParams, PointsOperationResponseInternal,
-    PointsSelector, QueryBatchResponse, QueryPoints, QueryResponse,
-    ReadConsistency as ReadConsistencyGrpc, RecommendBatchResponse, RecommendGroupsResponse,
-    RecommendPointGroups, RecommendPoints, RecommendResponse, ScrollPoints, ScrollResponse,
-    SearchBatchResponse, SearchGroupsResponse, SearchPointGroups, SearchPoints, SearchResponse,
-    SetPayloadPoints, SyncPoints, UpdateBatchPoints, UpdateBatchResponse, UpdatePointVectors,
-    UpsertPoints,
+    FacetCounts, FacetResponse, FieldType, GetPoints, GetResponse, PayloadIndexParams,
+    PointsOperationResponseInternal, PointsSelector, QueryBatchResponse, QueryGroupsResponse,
+    QueryPointGroups, QueryPoints, QueryResponse, ReadConsistency as ReadConsistencyGrpc,
+    RecommendBatchResponse, RecommendGroupsResponse, RecommendPointGroups, RecommendPoints,
+    RecommendResponse, ScrollPoints, ScrollResponse, SearchBatchResponse, SearchGroupsResponse,
+    SearchPointGroups, SearchPoints, SearchResponse, SetPayloadPoints, SyncPoints,
+    UpdateBatchPoints, UpdateBatchResponse, UpdatePointVectors, UpsertPoints,
 };
 use api::rest::{OrderByInterface, ShardKeySelector};
 use collection::operations::consistency_params::ReadConsistency;
@@ -31,17 +31,19 @@ use collection::operations::types::{
     default_exact_count, CoreSearchRequest, CoreSearchRequestBatch, PointRequestInternal,
     RecommendExample, Record, ScrollRequestInternal,
 };
-use collection::operations::universal_query::collection_query::CollectionQueryRequest;
+use collection::operations::universal_query::collection_query::{
+    CollectionQueryGroupsRequest, CollectionQueryRequest,
+};
 use collection::operations::vector_ops::{DeleteVectors, PointVectors, UpdateVectors};
 use collection::operations::{ClockTag, CollectionUpdateOperations, OperationWithClockTag};
 use collection::shards::shard::ShardId;
 use itertools::Itertools;
+use segment::data_types::facets::FacetParams;
 use segment::data_types::order_by::OrderBy;
 use segment::data_types::vectors::VectorStructInternal;
 use segment::types::{
     ExtendedPointId, Filter, PayloadFieldSchema, PayloadSchemaParams, PayloadSchemaType,
 };
-use storage::content_manager::conversions::error_to_status;
 use storage::content_manager::toc::TableOfContent;
 use storage::dispatcher::Dispatcher;
 use storage::rbac::Access;
@@ -51,8 +53,8 @@ use crate::common::points::{
     do_clear_payload, do_core_search_points, do_count_points, do_create_index,
     do_create_index_internal, do_delete_index, do_delete_index_internal, do_delete_payload,
     do_delete_points, do_delete_vectors, do_get_points, do_overwrite_payload,
-    do_query_batch_points, do_query_points, do_scroll_points, do_search_batch_points,
-    do_set_payload, do_update_vectors, do_upsert_points, CreateFieldIndex,
+    do_query_batch_points, do_query_point_groups, do_query_points, do_scroll_points,
+    do_search_batch_points, do_set_payload, do_update_vectors, do_upsert_points, CreateFieldIndex,
 };
 
 fn extract_points_selector(
@@ -131,8 +133,7 @@ pub async fn upsert(
         write_ordering_from_proto(ordering)?,
         access,
     )
-    .await
-    .map_err(error_to_status)?;
+    .await?;
 
     let response = points_operation_response_internal(timing, result);
     Ok(Response::new(response))
@@ -185,8 +186,7 @@ pub async fn sync(
             shard_selector,
             access,
         )
-        .await
-        .map_err(error_to_status)?;
+        .await?;
 
     let response = points_operation_response_internal(timing, result);
     Ok(Response::new(response))
@@ -223,8 +223,7 @@ pub async fn delete(
         write_ordering_from_proto(ordering)?,
         access,
     )
-    .await
-    .map_err(error_to_status)?;
+    .await?;
 
     let response = points_operation_response_internal(timing, result);
     Ok(Response::new(response))
@@ -278,8 +277,7 @@ pub async fn update_vectors(
         write_ordering_from_proto(ordering)?,
         access,
     )
-    .await
-    .map_err(error_to_status)?;
+    .await?;
 
     let response = points_operation_response_internal(timing, result);
     Ok(Response::new(response))
@@ -325,8 +323,7 @@ pub async fn delete_vectors(
         write_ordering_from_proto(ordering)?,
         access,
     )
-    .await
-    .map_err(error_to_status)?;
+    .await?;
 
     let response = points_operation_response_internal(timing, result);
     Ok(Response::new(response))
@@ -370,8 +367,7 @@ pub async fn set_payload(
         write_ordering_from_proto(ordering)?,
         access,
     )
-    .await
-    .map_err(error_to_status)?;
+    .await?;
 
     let response = points_operation_response_internal(timing, result);
     Ok(Response::new(response))
@@ -415,8 +411,7 @@ pub async fn overwrite_payload(
         write_ordering_from_proto(ordering)?,
         access,
     )
-    .await
-    .map_err(error_to_status)?;
+    .await?;
 
     let response = points_operation_response_internal(timing, result);
     Ok(Response::new(response))
@@ -458,8 +453,7 @@ pub async fn delete_payload(
         write_ordering_from_proto(ordering)?,
         access,
     )
-    .await
-    .map_err(error_to_status)?;
+    .await?;
 
     let response = points_operation_response_internal(timing, result);
     Ok(Response::new(response))
@@ -496,8 +490,7 @@ pub async fn clear_payload(
         write_ordering_from_proto(ordering)?,
         access,
     )
-    .await
-    .map_err(error_to_status)?;
+    .await?;
 
     let response = points_operation_response_internal(timing, result);
     Ok(Response::new(response))
@@ -534,8 +527,8 @@ pub async fn update_batch(
                     toc.clone(),
                     UpsertPoints {
                         collection_name,
-                        points,
                         wait,
+                        points,
                         ordering,
                         shard_key_selector,
                     },
@@ -750,28 +743,71 @@ fn convert_field_type(
     field_index_params: Option<PayloadIndexParams>,
 ) -> Result<Option<PayloadFieldSchema>, Status> {
     let field_type_parsed = field_type
-        .map(FieldType::from_i32)
+        .map(|x| FieldType::try_from(x).ok())
         .ok_or_else(|| Status::invalid_argument("cannot convert field_type"))?;
 
     let field_schema = match (field_type_parsed, field_index_params) {
-        // Parameterized text type
         (
-            Some(FieldType::Text),
+            Some(field_type),
             Some(PayloadIndexParams {
-                index_params: Some(IndexParams::TextIndexParams(text_index_params)),
+                index_params: Some(index_params),
             }),
-        ) => Some(PayloadFieldSchema::FieldParams(PayloadSchemaParams::Text(
-            text_index_params.try_into()?,
-        ))),
-        // Parameterized integer type
-        (
-            Some(FieldType::Integer),
-            Some(PayloadIndexParams {
-                index_params: Some(IndexParams::IntegerIndexParams(integer_params)),
-            }),
-        ) => Some(PayloadFieldSchema::FieldParams(
-            PayloadSchemaParams::Integer(integer_params.try_into()?),
-        )),
+        ) => {
+            let schema_params = match index_params {
+                // Parameterized keyword type
+                IndexParams::KeywordIndexParams(keyword_index_params) => {
+                    matches!(field_type, FieldType::Keyword).then(|| {
+                        TryFrom::try_from(keyword_index_params).map(PayloadSchemaParams::Keyword)
+                    })
+                }
+                IndexParams::IntegerIndexParams(integer_index_params) => {
+                    matches!(field_type, FieldType::Integer).then(|| {
+                        TryFrom::try_from(integer_index_params).map(PayloadSchemaParams::Integer)
+                    })
+                }
+                // Parameterized float type
+                IndexParams::FloatIndexParams(float_index_params) => {
+                    matches!(field_type, FieldType::Float).then(|| {
+                        TryFrom::try_from(float_index_params).map(PayloadSchemaParams::Float)
+                    })
+                }
+                IndexParams::GeoIndexParams(geo_index_params) => {
+                    matches!(field_type, FieldType::Geo)
+                        .then(|| TryFrom::try_from(geo_index_params).map(PayloadSchemaParams::Geo))
+                }
+                // Parameterized text type
+                IndexParams::TextIndexParams(text_index_params) => {
+                    matches!(field_type, FieldType::Text).then(|| {
+                        TryFrom::try_from(text_index_params).map(PayloadSchemaParams::Text)
+                    })
+                }
+                // Parameterized bool type
+                IndexParams::BoolIndexParams(bool_index_params) => {
+                    matches!(field_type, FieldType::Bool).then(|| {
+                        TryFrom::try_from(bool_index_params).map(PayloadSchemaParams::Bool)
+                    })
+                }
+                // Parameterized Datetime type
+                IndexParams::DatetimeIndexParams(datetime_index_params) => {
+                    matches!(field_type, FieldType::Datetime).then(|| {
+                        TryFrom::try_from(datetime_index_params).map(PayloadSchemaParams::Datetime)
+                    })
+                }
+                // Parameterized Uuid type
+                IndexParams::UuidIndexParams(uuid_index_params) => {
+                    matches!(field_type, FieldType::Uuid).then(|| {
+                        TryFrom::try_from(uuid_index_params).map(PayloadSchemaParams::Uuid)
+                    })
+                }
+            }
+            .ok_or_else(|| {
+                Status::invalid_argument(format!(
+                    "field_type ({field_type:?}) and field_index_params do not match"
+                ))
+            })??;
+
+            Some(PayloadFieldSchema::FieldParams(schema_params))
+        }
         // Regular field types
         (Some(v), None | Some(PayloadIndexParams { index_params: None })) => match v {
             FieldType::Keyword => Some(PayloadSchemaType::Keyword.into()),
@@ -781,18 +817,8 @@ fn convert_field_type(
             FieldType::Text => Some(PayloadSchemaType::Text.into()),
             FieldType::Bool => Some(PayloadSchemaType::Bool.into()),
             FieldType::Datetime => Some(PayloadSchemaType::Datetime.into()),
+            FieldType::Uuid => Some(PayloadSchemaType::Uuid.into()),
         },
-        // Parameterized index with mismatching types
-        (
-            Some(v),
-            Some(PayloadIndexParams {
-                index_params: Some(_),
-            }),
-        ) => {
-            return Err(Status::invalid_argument(format!(
-                "field_type ({v:?}) and field_index_params do not match"
-            )))
-        }
         (None, Some(_)) => return Err(Status::invalid_argument("field type is missing")),
         (None, None) => None,
     };
@@ -835,8 +861,7 @@ pub async fn create_field_index(
         write_ordering_from_proto(ordering)?,
         access,
     )
-    .await
-    .map_err(error_to_status)?;
+    .await?;
 
     let response = points_operation_response_internal(timing, result);
     Ok(Response::new(response))
@@ -871,8 +896,7 @@ pub async fn create_field_index_internal(
         wait.unwrap_or(false),
         write_ordering_from_proto(ordering)?,
     )
-    .await
-    .map_err(error_to_status)?;
+    .await?;
 
     let response = points_operation_response_internal(timing, result);
     Ok(Response::new(response))
@@ -905,8 +929,7 @@ pub async fn delete_field_index(
         write_ordering_from_proto(ordering)?,
         access,
     )
-    .await
-    .map_err(error_to_status)?;
+    .await?;
 
     let response = points_operation_response_internal(timing, result);
     Ok(Response::new(response))
@@ -937,8 +960,7 @@ pub async fn delete_field_index_internal(
         wait.unwrap_or(false),
         write_ordering_from_proto(ordering)?,
     )
-    .await
-    .map_err(error_to_status)?;
+    .await?;
 
     let response = points_operation_response_internal(timing, result);
     Ok(Response::new(response))
@@ -999,8 +1021,7 @@ pub async fn search(
         access,
         timeout.map(Duration::from_secs),
     )
-    .await
-    .map_err(error_to_status)?;
+    .await?;
 
     let response = SearchResponse {
         result: scored_points
@@ -1033,8 +1054,7 @@ pub async fn core_search_batch(
         access,
         timeout,
     )
-    .await
-    .map_err(error_to_status)?;
+    .await?;
 
     let response = SearchBatchResponse {
         result: scored_points
@@ -1088,8 +1108,7 @@ pub async fn core_search_list(
             access,
             timeout,
         )
-        .await
-        .map_err(error_to_status)?;
+        .await?;
 
     let response = SearchBatchResponse {
         result: scored_points
@@ -1134,8 +1153,7 @@ pub async fn search_groups(
         access,
         timeout.map(Duration::from_secs),
     )
-    .await
-    .map_err(error_to_status)?;
+    .await?;
 
     let response = SearchGroupsResponse {
         result: Some(groups_result.into()),
@@ -1227,8 +1245,7 @@ pub async fn recommend(
             access,
             timeout,
         )
-        .await
-        .map_err(error_to_status)?;
+        .await?;
 
     let response = RecommendResponse {
         result: recommended_points
@@ -1270,8 +1287,7 @@ pub async fn recommend_batch(
             access,
             timeout,
         )
-        .await
-        .map_err(error_to_status)?;
+        .await?;
 
     let response = RecommendBatchResponse {
         result: scored_points
@@ -1315,8 +1331,7 @@ pub async fn recommend_groups(
         access,
         timeout.map(Duration::from_secs),
     )
-    .await
-    .map_err(error_to_status)?;
+    .await?;
 
     let response = RecommendGroupsResponse {
         result: Some(groups_result.into()),
@@ -1347,8 +1362,7 @@ pub async fn discover(
             access,
             timeout,
         )
-        .await
-        .map_err(error_to_status)?;
+        .await?;
 
     let response = DiscoverResponse {
         result: discovered_points
@@ -1389,8 +1403,7 @@ pub async fn discover_batch(
             access,
             timeout,
         )
-        .await
-        .map_err(error_to_status)?;
+        .await?;
 
     let response = DiscoverBatchResponse {
         result: scored_points
@@ -1420,6 +1433,7 @@ pub async fn scroll(
         read_consistency,
         shard_key_selector,
         order_by,
+        timeout,
     } = scroll_points;
 
     let scroll_request = ScrollRequestInternal {
@@ -1436,6 +1450,7 @@ pub async fn scroll(
             .map(OrderByInterface::Struct),
     };
 
+    let timeout = timeout.map(Duration::from_secs);
     let read_consistency = ReadConsistency::try_from_optional(read_consistency)?;
 
     let shard_selector = convert_shard_selector_for_read(shard_selection, shard_key_selector);
@@ -1446,11 +1461,11 @@ pub async fn scroll(
         &collection_name,
         scroll_request,
         read_consistency,
+        timeout,
         shard_selector,
         access,
     )
-    .await
-    .map_err(error_to_status)?;
+    .await?;
 
     let response = ScrollResponse {
         next_page_offset: scrolled_points.next_page_offset.map(|n| n.into()),
@@ -1478,13 +1493,14 @@ pub async fn count(
         exact,
         read_consistency,
         shard_key_selector,
+        timeout,
     } = count_points;
 
     let count_request = collection::operations::types::CountRequestInternal {
         filter: filter.map(|f| f.try_into()).transpose()?,
         exact: exact.unwrap_or_else(default_exact_count),
     };
-
+    let timeout = timeout.map(Duration::from_secs);
     let read_consistency = ReadConsistency::try_from_optional(read_consistency)?;
 
     let shard_selector = convert_shard_selector_for_read(shard_selection, shard_key_selector);
@@ -1495,11 +1511,11 @@ pub async fn count(
         &collection_name,
         count_request,
         read_consistency,
+        timeout,
         shard_selector,
         access,
     )
-    .await
-    .map_err(error_to_status)?;
+    .await?;
 
     let response = CountResponse {
         result: Some(count_result.into()),
@@ -1522,6 +1538,7 @@ pub async fn get(
         with_vectors,
         read_consistency,
         shard_key_selector,
+        timeout,
     } = get_points;
 
     let point_request = PointRequestInternal {
@@ -1534,7 +1551,7 @@ pub async fn get(
             .map(|selector| selector.into())
             .unwrap_or_default(),
     };
-
+    let timeout = timeout.map(Duration::from_secs);
     let read_consistency = ReadConsistency::try_from_optional(read_consistency)?;
 
     let shard_selector = convert_shard_selector_for_read(shard_selection, shard_key_selector);
@@ -1546,11 +1563,11 @@ pub async fn get(
         &collection_name,
         point_request,
         read_consistency,
+        timeout,
         shard_selector,
         access,
     )
-    .await
-    .map_err(error_to_status)?;
+    .await?;
 
     let response = GetResponse {
         result: records.into_iter().map(|point| point.into()).collect(),
@@ -1586,8 +1603,7 @@ pub async fn query(
         access,
         timeout,
     )
-    .await
-    .map_err(error_to_status)?;
+    .await?;
 
     let response = QueryResponse {
         result: scored_points
@@ -1625,8 +1641,7 @@ pub async fn query_batch(
         access,
         timeout,
     )
-    .await
-    .map_err(error_to_status)?;
+    .await?;
 
     let response = QueryBatchResponse {
         result: scored_points
@@ -1635,6 +1650,96 @@ pub async fn query_batch(
                 result: points.into_iter().map(|p| p.into()).collect(),
             })
             .collect(),
+        time: timing.elapsed().as_secs_f64(),
+    };
+
+    Ok(Response::new(response))
+}
+
+pub async fn query_groups(
+    toc: &TableOfContent,
+    query_points: QueryPointGroups,
+    shard_selection: Option<ShardId>,
+    access: Access,
+) -> Result<Response<QueryGroupsResponse>, Status> {
+    let shard_key_selector = query_points.shard_key_selector.clone();
+    let shard_selector = convert_shard_selector_for_read(shard_selection, shard_key_selector);
+    let read_consistency = query_points
+        .read_consistency
+        .clone()
+        .map(TryFrom::try_from)
+        .transpose()?;
+    let timeout = query_points.timeout.map(Duration::from_secs);
+    let collection_name = query_points.collection_name.clone();
+    let request = CollectionQueryGroupsRequest::try_from(query_points)?;
+    let timing = Instant::now();
+    let groups_result = do_query_point_groups(
+        toc,
+        &collection_name,
+        request,
+        read_consistency,
+        shard_selector,
+        access,
+        timeout,
+    )
+    .await?;
+
+    let response = QueryGroupsResponse {
+        result: Some(groups_result.into()),
+        time: timing.elapsed().as_secs_f64(),
+    };
+
+    Ok(Response::new(response))
+}
+
+pub async fn facet(
+    toc: &TableOfContent,
+    facet_counts: FacetCounts,
+    access: Access,
+) -> Result<Response<FacetResponse>, Status> {
+    let FacetCounts {
+        collection_name,
+        key,
+        filter,
+        exact,
+        limit,
+        read_consistency,
+        shard_key_selector,
+        timeout,
+    } = facet_counts;
+
+    let facet_request = FacetParams {
+        key: json_path_from_proto(&key)?,
+        filter: filter.map(TryInto::try_into).transpose()?,
+        limit: limit
+            .map(usize::try_from)
+            .transpose()
+            .map_err(|_| Status::invalid_argument("could not parse limit param into usize"))?
+            .unwrap_or(FacetParams::DEFAULT_LIMIT),
+        exact: exact.unwrap_or(FacetParams::DEFAULT_EXACT),
+    };
+
+    let timeout = timeout.map(Duration::from_secs);
+    let read_consistency = ReadConsistency::try_from_optional(read_consistency)?;
+
+    let shard_selector = convert_shard_selector_for_read(None, shard_key_selector);
+
+    let timing = Instant::now();
+    let facet_response = toc
+        .facet(
+            &collection_name,
+            facet_request,
+            shard_selector,
+            read_consistency,
+            access,
+            timeout,
+        )
+        .await?;
+
+    let segment::data_types::facets::FacetResponse { hits } = facet_response;
+
+    let response = FacetResponse {
+        hits: hits.into_iter().map(From::from).collect(),
         time: timing.elapsed().as_secs_f64(),
     };
 

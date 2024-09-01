@@ -3,6 +3,7 @@ use std::collections::HashSet;
 use std::mem::take;
 
 use api::rest::LookupLocation;
+use collection::collection::distance_matrix::CollectionSearchMatrixRequest;
 use collection::grouping::group_by::{GroupRequest, SourceRequest};
 use collection::lookup::WithLookup;
 use collection::operations::payload_ops::{DeletePayloadOp, PayloadOps, SetPayloadOp};
@@ -16,6 +17,7 @@ use collection::operations::universal_query::collection_query::{
 };
 use collection::operations::vector_ops::VectorOperations;
 use collection::operations::CollectionUpdateOperations;
+use segment::data_types::facets::FacetParams;
 use segment::types::{Condition, ExtendedPointId, FieldCondition, Filter, Match, Payload};
 
 use super::{
@@ -23,7 +25,7 @@ use super::{
     CollectionAccessView, CollectionPass, PayloadConstraint,
 };
 use crate::content_manager::collection_meta_ops::CollectionMetaOperations;
-use crate::content_manager::errors::StorageError;
+use crate::content_manager::errors::{StorageError, StorageResult};
 
 impl Access {
     #[allow(private_bounds)]
@@ -260,6 +262,7 @@ impl CheckableCollectionOperation for GroupRequest {
                 view.apply_filter(&mut s.filter);
             }
             SourceRequest::Recommend(r) => r.check_access(view, access)?,
+            SourceRequest::Query(q) => q.check_access(view, access)?,
         }
         access.check_with_lookup(&self.with_lookup)?;
         Ok(())
@@ -333,7 +336,7 @@ impl CheckableCollectionOperation for CollectionQueryRequest {
             view.check_vector_query(vector_query)?
         }
 
-        // TODO(universal-query): implement lookup_from
+        access.check_lookup_from(&self.lookup_from)?;
 
         for prefetch_query in self.prefetch.iter_mut() {
             check_access_for_prefetch(prefetch_query, &view, access)?;
@@ -346,7 +349,7 @@ impl CheckableCollectionOperation for CollectionQueryRequest {
 fn check_access_for_prefetch(
     prefetch: &mut CollectionPrefetch,
     view: &CollectionAccessView<'_>,
-    _access: &CollectionAccessList, // TODO(universal_query): implement lookup_from
+    access: &CollectionAccessList,
 ) -> Result<(), StorageError> {
     view.apply_filter(&mut prefetch.filter);
 
@@ -354,14 +357,52 @@ fn check_access_for_prefetch(
         view.check_vector_query(vector_query)?
     }
 
-    // TODO(universal-query): implement lookup_from
+    access.check_lookup_from(&prefetch.lookup_from)?;
 
     // Recurse inner prefetches
     for prefetch_query in prefetch.prefetch.iter_mut() {
-        check_access_for_prefetch(prefetch_query, view, _access)?;
+        check_access_for_prefetch(prefetch_query, view, access)?;
     }
 
     Ok(())
+}
+
+impl CheckableCollectionOperation for FacetParams {
+    fn access_requirements(&self) -> AccessRequirements {
+        AccessRequirements {
+            write: false,
+            manage: false,
+            whole: false,
+        }
+    }
+
+    fn check_access(
+        &mut self,
+        view: CollectionAccessView<'_>,
+        _access: &CollectionAccessList,
+    ) -> StorageResult<()> {
+        view.apply_filter(&mut self.filter);
+        Ok(())
+    }
+}
+
+impl CheckableCollectionOperation for CollectionSearchMatrixRequest {
+    fn access_requirements(&self) -> AccessRequirements {
+        AccessRequirements {
+            write: false,
+            manage: false,
+            whole: false,
+        }
+    }
+
+    fn check_access(
+        &mut self,
+        view: CollectionAccessView<'_>,
+        _access: &CollectionAccessList,
+    ) -> StorageResult<()> {
+        view.apply_filter(&mut self.filter);
+        Ok(())
+    }
 }
 
 impl CheckableCollectionOperation for CollectionUpdateOperations {
@@ -536,7 +577,7 @@ impl PayloadConstraint {
     }
 
     fn make_payload(&self, collection_name: &str) -> Result<Payload, StorageError> {
-        // TODO: We need to construct a payload, then validate it against the claim
+        let _ = self; // TODO: We need to construct a payload, then validate it against the claim
         incompatible_with_payload_constraint(collection_name) // Reject as not implemented
     }
 }
@@ -613,7 +654,7 @@ mod tests_ops {
     use std::fmt::Debug;
 
     use api::rest::{
-        BatchVectorStruct, LookupLocation, OrderByInterface, RecommendStrategy,
+        self, BatchVectorStruct, LookupLocation, OrderByInterface, RecommendStrategy,
         SearchRequestInternal, VectorStruct,
     };
     use collection::operations::payload_ops::PayloadOpsDiscriminants;
@@ -868,7 +909,7 @@ mod tests_ops {
         let op = GroupRequest {
             // NOTE: SourceRequest::Recommend is already tested in test_recommend_request_internal
             source: SourceRequest::Search(SearchRequestInternal {
-                vector: NamedVectorStruct::Default(vec![0.0, 1.0, 2.0]).into(),
+                vector: rest::NamedVectorStruct::Default(vec![0.0, 1.0, 2.0]),
                 filter: None,
                 params: Some(SearchParams::default()),
                 limit: 100,
@@ -934,6 +975,7 @@ mod tests_ops {
                     s.filter = Some(PayloadConstraint::new_test("col").to_filter());
                 }
                 SourceRequest::Recommend(_) => unreachable!(),
+                SourceRequest::Query(_) => unreachable!(),
             },
         );
     }

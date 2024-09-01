@@ -1,25 +1,29 @@
-use std::borrow::Cow;
-use std::collections::{HashMap, HashSet};
+use std::collections::HashSet;
+use std::mem;
 use std::sync::Arc;
 use std::time::Duration;
 
-use api::rest::OrderByInterface;
 use futures::future::BoxFuture;
 use futures::FutureExt;
+use parking_lot::Mutex;
 use segment::common::reciprocal_rank_fusion::rrf_scoring;
+use segment::common::score_fusion::{score_fusion, ScoreFusion};
 use segment::types::{Filter, HasIdCondition, ScoredPoint, WithPayloadInterface, WithVector};
 use tokio::runtime::Handle;
+use tokio::time::error::Elapsed;
 
 use super::LocalShard;
 use crate::collection_manager::segments_searcher::SegmentsSearcher;
 use crate::operations::types::{
     CollectionError, CollectionResult, CoreSearchRequest, CoreSearchRequestBatch,
-    QueryScrollRequestInternal,
+    QueryScrollRequestInternal, ScrollOrder,
 };
 use crate::operations::universal_query::planned_query::{
     MergePlan, PlannedQuery, RescoreParams, Source,
 };
-use crate::operations::universal_query::shard_query::{Fusion, ScoringQuery, ShardQueryResponse};
+use crate::operations::universal_query::shard_query::{
+    Fusion, Sample, ScoringQuery, ShardQueryResponse,
+};
 
 pub enum FetchedSource {
     Search(usize),
@@ -27,22 +31,22 @@ pub enum FetchedSource {
 }
 
 struct PrefetchResults {
-    search_results: Vec<Vec<ScoredPoint>>,
-    scroll_results: Vec<Vec<ScoredPoint>>,
+    search_results: Mutex<Vec<Vec<ScoredPoint>>>,
+    scroll_results: Mutex<Vec<Vec<ScoredPoint>>>,
 }
 
 impl PrefetchResults {
     fn new(search_results: Vec<Vec<ScoredPoint>>, scroll_results: Vec<Vec<ScoredPoint>>) -> Self {
         Self {
-            search_results,
-            scroll_results,
+            scroll_results: Mutex::new(scroll_results),
+            search_results: Mutex::new(search_results),
         }
     }
 
-    fn get(&self, element: FetchedSource) -> CollectionResult<Cow<'_, Vec<ScoredPoint>>> {
+    fn get(&self, element: FetchedSource) -> CollectionResult<Vec<ScoredPoint>> {
         match element {
-            FetchedSource::Search(idx) => self.search_results.get(idx).map(Cow::Borrowed),
-            FetchedSource::Scroll(idx) => self.scroll_results.get(idx).map(Cow::Borrowed),
+            FetchedSource::Search(idx) => self.search_results.lock().get_mut(idx).map(mem::take),
+            FetchedSource::Scroll(idx) => self.scroll_results.lock().get_mut(idx).map(mem::take),
         }
         .ok_or_else(|| CollectionError::service_error("Expected a prefetched source to exist"))
     }
@@ -97,6 +101,7 @@ impl LocalShard {
         query_response: Vec<ScoredPoint>,
         with_payload: WithPayloadInterface,
         with_vector: WithVector,
+        timeout: Duration,
     ) -> CollectionResult<Vec<ScoredPoint>> {
         if !with_payload.is_required() && !with_vector.is_enabled() {
             return Ok(query_response);
@@ -109,22 +114,25 @@ impl LocalShard {
             .collect();
 
         // Collect retrieved records into a hashmap for fast lookup
-        let records_iter: HashMap<_, _> = SegmentsSearcher::retrieve(
-            self.segments(),
-            &point_ids,
-            &(&with_payload).into(),
-            &with_vector,
-        )?
-        .into_iter()
-        .map(|record| (record.id, record))
-        .collect();
+        let records_map = tokio::time::timeout(
+            timeout,
+            SegmentsSearcher::retrieve(
+                self.segments.clone(),
+                &point_ids,
+                &(&with_payload).into(),
+                &with_vector,
+                &self.search_runtime,
+            ),
+        )
+        .await
+        .map_err(|_: Elapsed| CollectionError::timeout(timeout.as_secs() as usize, "retrieve"))??;
 
         // It might be possible, that we won't find all records,
         // so we need to re-collect the results
         let query_response: Vec<_> = query_response
             .into_iter()
             .filter_map(|mut point| {
-                records_iter.get(&point.id).map(|record| {
+                records_map.get(&point.id).map(|record| {
                     point.payload.clone_from(&record.payload);
                     point.vector.clone_from(&record.vector);
                     point
@@ -147,17 +155,18 @@ impl LocalShard {
         'shard: 'query,
     {
         async move {
+            let start_time = std::time::Instant::now();
             let max_len = merge_plan.sources.len();
-            let mut cow_sources = Vec::with_capacity(max_len);
+            let mut sources = Vec::with_capacity(max_len);
 
             // We need to preserve the order of the sources for some fusion strategies
-            for source in merge_plan.sources.into_iter() {
+            for source in merge_plan.sources {
                 match source {
                     Source::SearchesIdx(idx) => {
-                        cow_sources.push(prefetch_holder.get(FetchedSource::Search(idx))?)
+                        sources.push(prefetch_holder.get(FetchedSource::Search(idx))?)
                     }
                     Source::ScrollsIdx(idx) => {
-                        cow_sources.push(prefetch_holder.get(FetchedSource::Scroll(idx))?)
+                        sources.push(prefetch_holder.get(FetchedSource::Scroll(idx))?)
                     }
                     Source::Prefetch(prefetch) => {
                         let merged = self
@@ -169,22 +178,19 @@ impl LocalShard {
                                 depth + 1,
                             )
                             .await?
-                            .into_iter()
-                            .map(Cow::Owned);
-                        cow_sources.extend(merged);
+                            .into_iter();
+                        sources.extend(merged);
                     }
                 }
             }
 
+            // decrease timeout by the time spent so far (recursive calls)
+            let timeout = timeout.saturating_sub(start_time.elapsed());
+
             // Rescore or return plain sources
             if let Some(rescore_params) = merge_plan.rescore_params {
                 let rescored = self
-                    .rescore(
-                        cow_sources.into_iter(),
-                        rescore_params,
-                        search_runtime_handle,
-                        timeout,
-                    )
+                    .rescore(sources, rescore_params, search_runtime_handle, timeout)
                     .await?;
 
                 Ok(vec![rescored])
@@ -192,8 +198,7 @@ impl LocalShard {
                 // The sources here are passed to the next layer without any extra processing.
                 // It is either a query without prefetches, or a fusion request and the intermediate results are passed to the next layer.
                 debug_assert_eq!(depth, 0);
-                // TODO(universal-query): maybe there's a way to pass ownership of the prefetch_holder to avoid cloning with Cow::into_owned here
-                Ok(cow_sources.into_iter().map(Cow::into_owned).collect())
+                Ok(sources)
             }
         }
         .boxed()
@@ -202,14 +207,13 @@ impl LocalShard {
     /// Rescore list of scored points
     async fn rescore<'a>(
         &self,
-        sources: impl Iterator<Item = Cow<'a, Vec<ScoredPoint>>>,
+        sources: Vec<Vec<ScoredPoint>>,
         rescore_params: RescoreParams,
         search_runtime_handle: &Handle,
         timeout: Duration,
     ) -> CollectionResult<Vec<ScoredPoint>> {
         let RescoreParams {
             rescore,
-            offset,
             score_threshold,
             limit,
             with_vector,
@@ -217,41 +221,30 @@ impl LocalShard {
         } = rescore_params;
 
         match rescore {
-            ScoringQuery::Fusion(Fusion::Rrf) => {
-                let sources: Vec<_> = sources.map(Cow::into_owned).collect();
-
-                let top_rrf = rrf_scoring(sources);
-
-                let top_rrf: Vec<_> = if let Some(score_threshold) = score_threshold {
-                    top_rrf
-                        .into_iter()
-                        .take_while(|point| point.score >= score_threshold)
-                        .skip(offset)
-                        .take(limit)
-                        .collect()
-                } else {
-                    top_rrf.into_iter().skip(offset).take(limit).collect()
-                };
-
-                let filled_top_rrf = self
-                    .fill_with_payload_or_vectors(top_rrf, with_payload, with_vector)
-                    .await?;
-
-                Ok(filled_top_rrf)
+            ScoringQuery::Fusion(fusion) => {
+                self.fusion_rescore(
+                    sources.into_iter(),
+                    fusion,
+                    score_threshold,
+                    limit,
+                    with_payload,
+                    with_vector,
+                    timeout,
+                )
+                .await
             }
             ScoringQuery::OrderBy(order_by) => {
                 // create single scroll request for rescoring query
-                let filter = filter_with_sources_ids(sources);
+                let filter = filter_with_sources_ids(sources.into_iter());
 
                 // Note: score_threshold is not used in this case, as all results will have same score,
                 // but different order_value
                 let scroll_request = QueryScrollRequestInternal {
-                    offset,
                     limit,
                     filter: Some(filter),
                     with_payload,
                     with_vector,
-                    order_by: Some(OrderByInterface::Struct(order_by)),
+                    scroll_order: ScrollOrder::ByField(order_by),
                 };
 
                 self.query_scroll_batch(
@@ -269,14 +262,14 @@ impl LocalShard {
             }
             ScoringQuery::Vector(query_enum) => {
                 // create single search request for rescoring query
-                let filter = filter_with_sources_ids(sources);
+                let filter = filter_with_sources_ids(sources.into_iter());
 
                 let search_request = CoreSearchRequest {
                     query: query_enum,
                     filter: Some(filter),
                     params: None,
                     limit,
-                    offset,
+                    offset: 0,
                     with_payload: Some(with_payload),
                     with_vector: Some(with_vector),
                     score_threshold,
@@ -300,12 +293,73 @@ impl LocalShard {
                     )
                 })
             }
+            ScoringQuery::Sample(sample) => match sample {
+                Sample::Random => {
+                    // create single scroll request for rescoring query
+                    let filter = filter_with_sources_ids(sources.into_iter());
+
+                    // Note: score_threshold is not used in this case, as all results will have same score and order_value
+                    let scroll_request = QueryScrollRequestInternal {
+                        limit,
+                        filter: Some(filter),
+                        with_payload,
+                        with_vector,
+                        scroll_order: ScrollOrder::Random,
+                    };
+
+                    self.query_scroll_batch(
+                        Arc::new(vec![scroll_request]),
+                        search_runtime_handle,
+                        timeout,
+                    )
+                    .await?
+                    .pop()
+                    .ok_or_else(|| {
+                        CollectionError::service_error(
+                            "Rescoring with order-by query didn't return expected batch of results",
+                        )
+                    })
+                }
+            },
         }
+    }
+
+    #[allow(clippy::too_many_arguments)]
+    async fn fusion_rescore<'a>(
+        &self,
+        sources: impl Iterator<Item = Vec<ScoredPoint>>,
+        fusion: Fusion,
+        score_threshold: Option<f32>,
+        limit: usize,
+        with_payload: WithPayloadInterface,
+        with_vector: WithVector,
+        timeout: Duration,
+    ) -> Result<Vec<ScoredPoint>, CollectionError> {
+        let fused = match fusion {
+            Fusion::Rrf => rrf_scoring(sources),
+            Fusion::Dbsf => score_fusion(sources, ScoreFusion::dbsf()),
+        };
+
+        let top_fused: Vec<_> = if let Some(score_threshold) = score_threshold {
+            fused
+                .into_iter()
+                .take_while(|point| point.score >= score_threshold)
+                .take(limit)
+                .collect()
+        } else {
+            fused.into_iter().take(limit).collect()
+        };
+
+        let filled_top_fused = self
+            .fill_with_payload_or_vectors(top_fused, with_payload, with_vector, timeout)
+            .await?;
+
+        Ok(filled_top_fused)
     }
 }
 
 /// Extracts point ids from sources, and creates a filter to only include those ids.
-fn filter_with_sources_ids<'a>(sources: impl Iterator<Item = Cow<'a, Vec<ScoredPoint>>>) -> Filter {
+fn filter_with_sources_ids(sources: impl Iterator<Item = Vec<ScoredPoint>>) -> Filter {
     let mut point_ids = HashSet::new();
 
     for source in sources {

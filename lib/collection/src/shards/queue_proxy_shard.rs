@@ -6,6 +6,7 @@ use std::time::Duration;
 use async_trait::async_trait;
 use common::types::TelemetryDetail;
 use parking_lot::Mutex as ParkingMutex;
+use segment::data_types::facets::{FacetParams, FacetResponse};
 use segment::data_types::order_by::OrderBy;
 use segment::types::{
     ExtendedPointId, Filter, ScoredPoint, WithPayload, WithPayloadInterface, WithVector,
@@ -114,15 +115,18 @@ impl QueueProxyShard {
         })
     }
 
+    /// Get inner queue proxy shard. Will panic if the queue proxy has been finalized.
+    fn inner_unchecked(&self) -> &Inner {
+        self.inner.as_ref().expect("Queue proxy has been finalized")
+    }
+
     pub async fn create_snapshot(
         &self,
         temp_path: &Path,
         target_path: &Path,
         save_wal: bool,
     ) -> CollectionResult<()> {
-        self.inner
-            .as_ref()
-            .expect("Queue proxy has been finalized")
+        self.inner_unchecked()
             .wrapped_shard
             .create_snapshot(temp_path, target_path, save_wal)
             .await
@@ -140,36 +144,24 @@ impl QueueProxyShard {
     /// likely won't be updated. In the worst case this might cause double sending operations.
     /// This should be fine as operations are idempotent.
     pub async fn transfer_all_missed_updates(&self) -> CollectionResult<()> {
-        self.inner
-            .as_ref()
-            .expect("Queue proxy has been finalized")
-            .transfer_all_missed_updates()
-            .await
+        self.inner_unchecked().transfer_all_missed_updates().await
     }
 
     pub async fn on_optimizer_config_update(&self) -> CollectionResult<()> {
-        self.inner
-            .as_ref()
-            .expect("Queue proxy has been finalized")
+        self.inner_unchecked()
             .wrapped_shard
             .on_optimizer_config_update()
             .await
     }
 
     pub fn get_telemetry_data(&self, detail: TelemetryDetail) -> LocalShardTelemetry {
-        self.inner
-            .as_ref()
-            .expect("Queue proxy has been finalized")
+        self.inner_unchecked()
             .wrapped_shard
             .get_telemetry_data(detail)
     }
 
     pub fn update_tracker(&self) -> &UpdateTracker {
-        self.inner
-            .as_ref()
-            .expect("Queue proxy has been finalized")
-            .wrapped_shard
-            .update_tracker()
+        self.inner_unchecked().wrapped_shard.update_tracker()
     }
 
     /// Check if the queue proxy shard is already finalized
@@ -215,11 +207,7 @@ impl ShardOperation for QueueProxyShard {
         wait: bool,
     ) -> CollectionResult<UpdateResult> {
         // `Inner::update` is cancel safe, so this is also cancel safe.
-        self.inner
-            .as_ref()
-            .expect("Queue proxy has been finalized")
-            .update(operation, wait)
-            .await
+        self.inner_unchecked().update(operation, wait).await
     }
 
     /// Forward read-only `scroll_by` to `wrapped_shard`
@@ -232,10 +220,9 @@ impl ShardOperation for QueueProxyShard {
         filter: Option<&Filter>,
         search_runtime_handle: &Handle,
         order_by: Option<&OrderBy>,
+        timeout: Option<Duration>,
     ) -> CollectionResult<Vec<Record>> {
-        self.inner
-            .as_ref()
-            .expect("Queue proxy has been finalized")
+        self.inner_unchecked()
             .scroll_by(
                 offset,
                 limit,
@@ -244,17 +231,14 @@ impl ShardOperation for QueueProxyShard {
                 filter,
                 search_runtime_handle,
                 order_by,
+                timeout,
             )
             .await
     }
 
     /// Forward read-only `info` to `wrapped_shard`
     async fn info(&self) -> CollectionResult<CollectionInfo> {
-        self.inner
-            .as_ref()
-            .expect("Queue proxy has been finalized")
-            .info()
-            .await
+        self.inner_unchecked().info().await
     }
     async fn core_search(
         &self,
@@ -262,19 +246,20 @@ impl ShardOperation for QueueProxyShard {
         search_runtime_handle: &Handle,
         timeout: Option<Duration>,
     ) -> CollectionResult<Vec<Vec<ScoredPoint>>> {
-        self.inner
-            .as_ref()
-            .expect("Queue proxy has been finalized")
+        self.inner_unchecked()
             .core_search(request, search_runtime_handle, timeout)
             .await
     }
 
     /// Forward read-only `count` to `wrapped_shard`
-    async fn count(&self, request: Arc<CountRequestInternal>) -> CollectionResult<CountResult> {
-        self.inner
-            .as_ref()
-            .expect("Queue proxy has been finalized")
-            .count(request)
+    async fn count(
+        &self,
+        request: Arc<CountRequestInternal>,
+        search_runtime_handle: &Handle,
+        timeout: Option<Duration>,
+    ) -> CollectionResult<CountResult> {
+        self.inner_unchecked()
+            .count(request, search_runtime_handle, timeout)
             .await
     }
 
@@ -284,11 +269,17 @@ impl ShardOperation for QueueProxyShard {
         request: Arc<PointRequestInternal>,
         with_payload: &WithPayload,
         with_vector: &WithVector,
+        search_runtime_handle: &Handle,
+        timeout: Option<Duration>,
     ) -> CollectionResult<Vec<Record>> {
-        self.inner
-            .as_ref()
-            .expect("Queue proxy has been finalized")
-            .retrieve(request, with_payload, with_vector)
+        self.inner_unchecked()
+            .retrieve(
+                request,
+                with_payload,
+                with_vector,
+                search_runtime_handle,
+                timeout,
+            )
             .await
     }
 
@@ -299,11 +290,21 @@ impl ShardOperation for QueueProxyShard {
         search_runtime_handle: &Handle,
         timeout: Option<Duration>,
     ) -> CollectionResult<Vec<ShardQueryResponse>> {
-        self.inner
-            .as_ref()
-            .expect("Queue proxy has been finalized")
+        self.inner_unchecked()
             .wrapped_shard
             .query_batch(requests, search_runtime_handle, timeout)
+            .await
+    }
+
+    async fn facet(
+        &self,
+        request: Arc<FacetParams>,
+        search_runtime_handle: &Handle,
+        timeout: Option<Duration>,
+    ) -> CollectionResult<FacetResponse> {
+        self.inner_unchecked()
+            .wrapped_shard
+            .facet(request, search_runtime_handle, timeout)
             .await
     }
 }
@@ -526,6 +527,7 @@ impl ShardOperation for Inner {
         filter: Option<&Filter>,
         search_runtime_handle: &Handle,
         order_by: Option<&OrderBy>,
+        timeout: Option<Duration>,
     ) -> CollectionResult<Vec<Record>> {
         let local_shard = &self.wrapped_shard;
         local_shard
@@ -537,6 +539,7 @@ impl ShardOperation for Inner {
                 filter,
                 search_runtime_handle,
                 order_by,
+                timeout,
             )
             .await
     }
@@ -561,9 +564,16 @@ impl ShardOperation for Inner {
     }
 
     /// Forward read-only `count` to `wrapped_shard`
-    async fn count(&self, request: Arc<CountRequestInternal>) -> CollectionResult<CountResult> {
+    async fn count(
+        &self,
+        request: Arc<CountRequestInternal>,
+        search_runtime_handle: &Handle,
+        timeout: Option<Duration>,
+    ) -> CollectionResult<CountResult> {
         let local_shard = &self.wrapped_shard;
-        local_shard.count(request).await
+        local_shard
+            .count(request, search_runtime_handle, timeout)
+            .await
     }
 
     /// Forward read-only `retrieve` to `wrapped_shard`
@@ -572,10 +582,18 @@ impl ShardOperation for Inner {
         request: Arc<PointRequestInternal>,
         with_payload: &WithPayload,
         with_vector: &WithVector,
+        search_runtime_handle: &Handle,
+        timeout: Option<Duration>,
     ) -> CollectionResult<Vec<Record>> {
         let local_shard = &self.wrapped_shard;
         local_shard
-            .retrieve(request, with_payload, with_vector)
+            .retrieve(
+                request,
+                with_payload,
+                with_vector,
+                search_runtime_handle,
+                timeout,
+            )
             .await
     }
 
@@ -589,6 +607,18 @@ impl ShardOperation for Inner {
         let local_shard = &self.wrapped_shard;
         local_shard
             .query_batch(request, search_runtime_handle, timeout)
+            .await
+    }
+
+    async fn facet(
+        &self,
+        request: Arc<FacetParams>,
+        search_runtime_handle: &Handle,
+        timeout: Option<Duration>,
+    ) -> CollectionResult<FacetResponse> {
+        let local_shard = &self.wrapped_shard;
+        local_shard
+            .facet(request, search_runtime_handle, timeout)
             .await
     }
 }

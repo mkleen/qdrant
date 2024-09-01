@@ -1,3 +1,4 @@
+use std::str::FromStr;
 use std::sync::Arc;
 use std::time::{Duration, Instant};
 
@@ -5,17 +6,20 @@ use api::grpc::qdrant::points_internal_server::PointsInternal;
 use api::grpc::qdrant::{
     ClearPayloadPointsInternal, CoreSearchBatchPointsInternal, CountPointsInternal, CountResponse,
     CreateFieldIndexCollectionInternal, DeleteFieldIndexCollectionInternal,
-    DeletePayloadPointsInternal, DeletePointsInternal, DeleteVectorsInternal, GetPointsInternal,
-    GetResponse, IntermediateResult, PointsOperationResponseInternal, QueryBatchPointsInternal,
-    QueryBatchResponseInternal, QueryResultInternal, QueryShardPoints, RecommendPointsInternal,
-    RecommendResponse, ScrollPointsInternal, ScrollResponse, SearchBatchResponse,
-    SetPayloadPointsInternal, SyncPointsInternal, UpdateVectorsInternal, UpsertPointsInternal,
+    DeletePayloadPointsInternal, DeletePointsInternal, DeleteVectorsInternal, FacetCountsInternal,
+    FacetResponseInternal, GetPointsInternal, GetResponse, IntermediateResult,
+    PointsOperationResponseInternal, QueryBatchPointsInternal, QueryBatchResponseInternal,
+    QueryResultInternal, QueryShardPoints, RecommendPointsInternal, RecommendResponse,
+    ScrollPointsInternal, ScrollResponse, SearchBatchResponse, SetPayloadPointsInternal,
+    SyncPointsInternal, UpdateVectorsInternal, UpsertPointsInternal,
 };
 use collection::operations::shard_selector_internal::ShardSelectorInternal;
 use collection::operations::universal_query::shard_query::ShardQueryRequest;
 use collection::shards::shard::ShardId;
 use itertools::Itertools;
-use storage::content_manager::conversions::error_to_status;
+use segment::data_types::facets::{FacetParams, FacetResponse};
+use segment::json_path::JsonPath;
+use segment::types::Filter;
 use storage::content_manager::toc::TableOfContent;
 use storage::rbac::Access;
 use tonic::{Request, Response, Status};
@@ -67,8 +71,7 @@ pub async fn query_batch_internal(
 
     let batch_response = toc
         .query_batch_internal(&collection_name, batch_requests, shard_selection, timeout)
-        .await
-        .map_err(error_to_status)?;
+        .await?;
 
     let response = QueryBatchResponseInternal {
         results: batch_response
@@ -82,6 +85,51 @@ pub async fn query_batch_internal(
                     .collect_vec(),
             })
             .collect(),
+        time: timing.elapsed().as_secs_f64(),
+    };
+
+    Ok(Response::new(response))
+}
+
+async fn facet_counts_internal(
+    toc: &TableOfContent,
+    request: FacetCountsInternal,
+) -> Result<Response<FacetResponseInternal>, Status> {
+    let timing = Instant::now();
+
+    let FacetCountsInternal {
+        collection_name,
+        key,
+        filter,
+        limit,
+        exact,
+        shard_id,
+        timeout,
+    } = request;
+
+    let shard_selection = ShardSelectorInternal::ShardId(shard_id);
+
+    let request = FacetParams {
+        key: JsonPath::from_str(&key)
+            .map_err(|_| Status::invalid_argument("Failed to parse facet key"))?,
+        limit: limit as usize,
+        filter: filter.map(Filter::try_from).transpose()?,
+        exact,
+    };
+
+    let response = toc
+        .facet_internal(
+            &collection_name,
+            request,
+            shard_selection,
+            timeout.map(Duration::from_secs),
+        )
+        .await?;
+
+    let FacetResponse { hits } = response;
+
+    let response = FacetResponseInternal {
+        hits: hits.into_iter().map(From::from).collect_vec(),
         time: timing.elapsed().as_secs_f64(),
     };
 
@@ -504,5 +552,14 @@ impl PointsInternal for PointsInternalService {
             timeout,
         )
         .await
+    }
+
+    async fn facet(
+        &self,
+        request: Request<FacetCountsInternal>,
+    ) -> Result<Response<FacetResponseInternal>, Status> {
+        validate_and_log(request.get_ref());
+
+        facet_counts_internal(self.toc.as_ref(), request.into_inner()).await
     }
 }

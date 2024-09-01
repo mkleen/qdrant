@@ -1,9 +1,11 @@
 use std::collections::{HashMap, HashSet};
+use std::ops::Deref;
 use std::path::Path;
 use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::Arc;
 
 use common::cpu::CpuPermit;
+use common::disk::dir_size;
 use io::storage_version::StorageVersion;
 use itertools::Itertools;
 use parking_lot::{Mutex, RwLock, RwLockUpgradableReadGuard};
@@ -118,6 +120,10 @@ pub trait SegmentOptimizer {
         // }
         let mut bytes_count_by_vector_name = HashMap::new();
 
+        // Counting up how much space do the segments being optimized actually take on the fs.
+        // If there was at least one error while reading the size, this will be `None`.
+        let mut space_occupied = Some(0u64);
+
         for segment in optimizing_segments {
             let segment = match segment {
                 LockedSegment::Original(segment) => segment,
@@ -133,6 +139,61 @@ pub trait SegmentOptimizer {
                 let vector_size = locked_segment.available_vectors_size_in_bytes(&vector_name)?;
                 let size = bytes_count_by_vector_name.entry(vector_name).or_insert(0);
                 *size += vector_size;
+            }
+
+            space_occupied =
+                space_occupied.and_then(|acc| match dir_size(locked_segment.data_path()) {
+                    Ok(size) => Some(size + acc),
+                    Err(err) => {
+                        log::debug!(
+                            "Could not estimate size of segment `{}`: {}",
+                            locked_segment.data_path().display(),
+                            err
+                        );
+                        None
+                    }
+                });
+        }
+
+        let space_needed = space_occupied.map(|x| 2 * x);
+
+        // Ensure temp_path exists
+
+        if !self.temp_path().exists() {
+            std::fs::create_dir_all(self.temp_path()).map_err(|err| {
+                CollectionError::service_error(format!(
+                    "Could not create temp directory `{}`: {}",
+                    self.temp_path().display(),
+                    err
+                ))
+            })?;
+        }
+
+        let space_available = match fs4::available_space(self.temp_path()) {
+            Ok(available) => Some(available),
+            Err(err) => {
+                log::debug!(
+                    "Could not estimate available storage space in `{}`: {}",
+                    self.temp_path().display(),
+                    err
+                );
+                None
+            }
+        };
+
+        match (space_available, space_needed) {
+            (Some(space_available), Some(space_needed)) => {
+                if space_available < space_needed {
+                    return Err(CollectionError::service_error(
+                        "Not enough space available for optimization".to_string(),
+                    ));
+                }
+            }
+            _ => {
+                log::warn!(
+                    "Could not estimate available storage space in `{}`; will try optimizing anyway",
+                    self.name()
+                );
             }
         }
 
@@ -352,14 +413,40 @@ pub trait SegmentOptimizer {
 
         self.check_cancellation(stopped)?;
 
-        for segment in optimizing_segments {
-            match segment {
-                LockedSegment::Original(segment_arc) => {
-                    let segment_guard = segment_arc.read();
-                    segment_builder.update_from(&segment_guard, stopped)?;
+        let segments: Vec<_> = optimizing_segments
+            .iter()
+            .map(|i| match i {
+                LockedSegment::Original(o) => o.clone(),
+                LockedSegment::Proxy(_) => {
+                    panic!("Trying to optimize a segment that is already being optimized!")
                 }
-                LockedSegment::Proxy(_) => panic!("Attempt to optimize segment which is already currently under optimization. Should never happen"),
-            }
+            })
+            .collect();
+
+        let mut defragmentation_keys = HashSet::new();
+        for segment in &segments {
+            let payload_index = &segment.read().payload_index;
+            let payload_index = payload_index.borrow();
+
+            let keys = payload_index
+                .config()
+                .indexed_fields
+                .iter()
+                .filter_map(|(key, schema)| schema.is_tenant().then_some(key))
+                .cloned();
+            defragmentation_keys.extend(keys);
+        }
+
+        if !defragmentation_keys.is_empty() {
+            segment_builder.set_defragment_keys(defragmentation_keys.into_iter().collect());
+        }
+
+        {
+            let segment_guards = segments.iter().map(|segment| segment.read()).collect_vec();
+            segment_builder.update(
+                &segment_guards.iter().map(Deref::deref).collect_vec(),
+                stopped,
+            )?;
         }
 
         for field in proxy_deleted_indexes.read().iter() {
@@ -511,9 +598,8 @@ pub trait SegmentOptimizer {
             proxy_ids
         };
 
-        check_process_stopped(stopped).map_err(|error| {
+        check_process_stopped(stopped).inspect_err(|_| {
             self.handle_cancellation(&segments, &proxy_ids, &tmp_segment);
-            error
         })?;
 
         // ---- SLOW PART -----
@@ -617,6 +703,7 @@ pub trait SegmentOptimizer {
                 tmp_segment.drop_data()?;
             }
         }
+
         timer.set_success(true);
         Ok(true)
     }
